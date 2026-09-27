@@ -1031,7 +1031,7 @@ def create_patient_folders_from_excel(rekap_excel_path, pkm_out_dir, nama_pkm):
 # ---------------------------------------------------------------------------
 # TAHAP 1: Mode Ekstraksi (Foto -> Excel & Folder Pasien)
 # ---------------------------------------------------------------------------
-def mode_extract(config, ref_by_no, ref_by_name):
+def mode_extract(config, ref_by_no=None, ref_by_name=None, target_pkm=None):
     """
     MODE EKSTRAKSI:
     1. Hanya membaca foto di folder 'foto_masuk/'.
@@ -1054,6 +1054,8 @@ def mode_extract(config, ref_by_no, ref_by_name):
 
     # Ambil subfolder nama Puskesmas langsung dari foto_masuk/
     pkm_subfolders = [d for d in input_base_dir.iterdir() if d.is_dir()]
+    if target_pkm:
+        pkm_subfolders = [d for d in pkm_subfolders if d.name.strip().upper() == target_pkm.strip().upper()]
 
     # Jika foto ditaruh langsung di root foto_masuk/
     img_extensions = {".jpg", ".jpeg", ".png", ".webp"}
@@ -1218,7 +1220,7 @@ def mode_extract(config, ref_by_no, ref_by_name):
 # ---------------------------------------------------------------------------
 # TAHAP 2: Mode Cetak (Validasi Kelengkapan & Cetak Word + PDF)
 # ---------------------------------------------------------------------------
-def mode_generate(config, word_app=None):
+def mode_generate(config, word_app=None, target_pkm=None):
     """
     MODE CETAK:
     1. Membaca data yang SUDAH direview dari 'Template Exel.xlsx' (atau Rekap per Puskesmas).
@@ -1235,6 +1237,9 @@ def mode_generate(config, word_app=None):
         return
 
     pkm_dirs = sorted([d for d in hasil_base.iterdir() if d.is_dir()], key=lambda x: x.name)
+    if target_pkm:
+        pkm_dirs = [d for d in pkm_dirs if d.name.strip().upper() == target_pkm.strip().upper()]
+
     if not pkm_dirs:
         print(f" [INFO] Tidak ada subfolder Puskesmas ditemukan di '{hasil_base.name}/'.", flush=True)
         return
