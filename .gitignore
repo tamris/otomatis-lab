@@ -1,0 +1,26 @@
+# Environment & Credentials
+.env
+.env.local
+
+# Python caches
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+
+# Private Patient Medical Data & Photos
+foto_masuk/*
+!foto_masuk/**/.gitkeep
+foto_arsip/*
+!foto_arsip/**/.gitkeep
+HASIL_PUSKESMAS/*
+!HASIL_PUSKESMAS/**/.gitkeep
+FOLDER_PASIEN/*
+!FOLDER_PASIEN/**/.gitkeep
+
+# Temporary & backup files
+temp_*
+*.tmp
+~$*.xlsx
+~$*.docx
