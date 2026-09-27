@@ -36,7 +36,7 @@ current_task = {
 
 
 def is_file_locked(file_path: Path) -> bool:
-    """Mengecek apakah file Excel sedang dibuka dan dikunci oleh proses lain."""
+    """Mengecek apakah file Excel sedang dibuka dan dikunci oleh proses lain untuk mode WRITE."""
     if not file_path.exists():
         return False
     try:
@@ -44,6 +44,30 @@ def is_file_locked(file_path: Path) -> bool:
             return False
     except (PermissionError, IOError):
         return True
+
+
+def read_excel_shared(file_path: Path):
+    """
+    Membaca file Excel secara aman bahkan jika sedang dibuka di Microsoft Excel.
+    Menggunakan Windows CreateFile dengan FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE.
+    """
+    try:
+        import io, win32file, win32con
+        handle = win32file.CreateFile(
+            str(file_path.resolve()),
+            win32con.GENERIC_READ,
+            win32con.FILE_SHARE_READ | win32con.FILE_SHARE_WRITE | win32con.FILE_SHARE_DELETE,
+            None,
+            win32con.OPEN_EXISTING,
+            win32con.FILE_ATTRIBUTE_NORMAL,
+            None
+        )
+        size = win32file.GetFileSize(handle)
+        _, data = win32file.ReadFile(handle, size)
+        win32file.CloseHandle(handle)
+        return openpyxl.load_workbook(io.BytesIO(data), data_only=True)
+    except Exception:
+        return openpyxl.load_workbook(file_path, data_only=True)
 
 
 def get_all_puskesmas_list() -> List[str]:
@@ -93,9 +117,9 @@ def get_pkm_stats(pkm_name: str):
     complete_count = 0
     pending_count = 0
 
-    if rekap_exists and not locked:
+    if rekap_exists:
         try:
-            wb = openpyxl.load_workbook(rekap_file, data_only=True)
+            wb = read_excel_shared(rekap_file)
             for s_name in ["DARAH", "URIN"]:
                 if s_name in wb.sheetnames:
                     ws = wb[s_name]
@@ -173,11 +197,13 @@ def api_get_patients(pkm: str):
     if not rekap_file.exists():
         return {"darah": [], "urin": [], "is_locked": False, "exists": False}
 
-    if is_file_locked(rekap_file):
-        return {"darah": [], "urin": [], "is_locked": True, "exists": True}
+    locked = is_file_locked(rekap_file)
+    try:
+        wb = read_excel_shared(rekap_file)
+    except Exception:
+        return {"darah": [], "urin": [], "is_locked": locked, "exists": True}
 
-    wb = openpyxl.load_workbook(rekap_file, data_only=True)
-    results = {"darah": [], "urin": [], "is_locked": False, "exists": True}
+    results = {"darah": [], "urin": [], "is_locked": locked, "exists": True}
 
     if "DARAH" in wb.sheetnames:
         ws = wb["DARAH"]
@@ -376,6 +402,16 @@ def api_open_excel(pkm: str = Form(...)):
 
     os.startfile(str(rekap_file.resolve()))
     return {"status": "opened", "path": str(rekap_file)}
+
+
+@app.post("/api/close-excel")
+def api_close_excel():
+    """Menutup proses Microsoft Excel yang sedang berjalan di background."""
+    try:
+        subprocess.run("taskkill /F /IM excel.exe", shell=True, capture_output=True)
+        return {"status": "success", "message": "Microsoft Excel berhasil ditutup."}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
 
 
 @app.get("/api/download-pdf/{pkm}")

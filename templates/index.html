@@ -91,15 +91,16 @@
   <!-- MAIN CONTAINER -->
   <main class="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
 
-    <!-- BANNER PERINGATAN FILE EXCEL TERKUNCI (JIKA ADA) -->
-    <div id="banner-locked" class="hidden bg-amber-50 border-l-4 border-amber-500 p-4 rounded-xl shadow-xs">
-      <div class="flex items-start">
-        <i data-lucide="alert-triangle" class="w-5 h-5 text-amber-600 mt-0.5 mr-3 shrink-0"></i>
-        <div class="flex-1">
-          <h3 class="text-sm font-bold text-amber-800">Perhatian: File Excel Sedang Dibuka!</h3>
-          <p class="text-xs text-amber-700 mt-1">File rekap Excel saat ini sedang dibuka di Microsoft Excel di laptop. Harap <strong>tutup file Excel tersebut</strong> agar proses ekstraksi, penyimpanan, atau reset data dapat berjalan lancar.</p>
+    <!-- NOTIFIKASI EXCEL AKTIF (JIKA ADA) -->
+    <div id="banner-locked" class="hidden bg-amber-50 border border-amber-200/80 p-3 rounded-xl shadow-xs">
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+        <div class="flex items-center space-x-2 text-xs text-amber-900 font-medium">
+          <i data-lucide="info" class="w-4 h-4 text-amber-600 shrink-0"></i>
+          <span>Aplikasi Microsoft Excel sedang aktif di laptop. Data di bawah tetap dapat dilihat secara normal.</span>
         </div>
-        <button onclick="refreshData()" class="ml-4 px-3 py-1 bg-amber-600 text-white text-xs font-semibold rounded-lg hover:bg-amber-700 transition">Periksa Lagi</button>
+        <button onclick="closeExcelProcess()" class="self-start sm:self-auto px-3 py-1 bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold rounded-lg transition shrink-0">
+          Tutup Excel Otomatis
+        </button>
       </div>
     </div>
 
@@ -449,16 +450,21 @@
       lucide.createIcons();
     }
 
+    async function closeExcelProcess() {
+      try {
+        const res = await fetch('/api/close-excel', { method: 'POST' });
+        const data = await res.json();
+        refreshData();
+      } catch (err) {
+        alert('Gagal menutup Excel: ' + err);
+      }
+    }
+
     async function loadPatients() {
       const tbody = document.getElementById('table-body');
       try {
         const res = await fetch(`/api/patients?pkm=${encodeURIComponent(activePuskesmas)}`);
         const data = await res.json();
-
-        if (data.is_locked) {
-          tbody.innerHTML = '<tr><td colspan="12" class="py-8 text-center text-amber-600 font-semibold">File Excel sedang dibuka di laptop. Tutup Excel lalu refresh untuk melihat data.</td></tr>';
-          return;
-        }
 
         allPatientsData = data.darah || [];
         renderTable(allPatientsData);
@@ -564,7 +570,13 @@
         const res = await fetch('/api/extract', { method: 'POST', body: formData });
         if (!res.ok) {
           const err = await res.json();
-          alert(err.detail || 'Gagal memulai ekstraksi.');
+          if (res.status === 400 && confirm(err.detail + '\n\nIngin menutup Excel secara otomatis sekarang?')) {
+            await closeExcelProcess();
+            setTimeout(startExtraction, 600);
+            return;
+          } else {
+            alert(err.detail || 'Gagal memulai ekstraksi.');
+          }
           btn.disabled = false;
           return;
         }
