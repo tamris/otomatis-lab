@@ -235,6 +235,22 @@
             </div>
           </div>
 
+          <!-- TASK ERROR BANNER -->
+          <div id="task-error-box" class="hidden mt-3 p-3 bg-rose-50 border border-rose-200 rounded-xl">
+            <div class="flex items-start justify-between gap-2">
+              <div class="flex items-start space-x-2 text-xs text-rose-800">
+                <i data-lucide="alert-triangle" class="w-4 h-4 text-rose-600 shrink-0 mt-0.5"></i>
+                <div>
+                  <p class="font-bold text-rose-900">Proses Terkendala:</p>
+                  <p id="task-error-text" class="text-rose-700 mt-0.5 break-words font-medium"></p>
+                </div>
+              </div>
+              <button onclick="dismissTaskError()" class="text-xs font-bold text-rose-600 hover:text-rose-800 p-1 shrink-0" title="Tutup">
+                <i data-lucide="x" class="w-3.5 h-3.5"></i>
+              </button>
+            </div>
+          </div>
+
           <hr class="my-4 border-slate-100">
 
           <!-- TOMBOL CETAK DOKUMEN -->
@@ -536,9 +552,89 @@
       if (files.length > 0) uploadFiles(files);
     }
 
+    function getActivePkm() {
+      const sel = document.getElementById('select-pkm');
+      return (sel && sel.value) ? sel.value : activePuskesmas;
+    }
+
+    function showToast(message, type = 'info') {
+      const container = document.getElementById('toast-container');
+      if (!container) return;
+
+      const toast = document.createElement('div');
+      toast.className = `pointer-events-auto flex items-center justify-between p-3.5 rounded-xl shadow-lg border text-xs font-semibold transition-all duration-300 transform translate-y-2 opacity-0 space-x-3`;
+
+      let icon = 'info';
+      if (type === 'success') {
+        toast.className += ' bg-emerald-600 border-emerald-500 text-white shadow-emerald-200';
+        icon = 'check-circle';
+      } else if (type === 'error') {
+        toast.className += ' bg-rose-600 border-rose-500 text-white shadow-rose-200';
+        icon = 'alert-octagon';
+      } else if (type === 'warning') {
+        toast.className += ' bg-amber-500 border-amber-400 text-white shadow-amber-200';
+        icon = 'alert-triangle';
+      } else {
+        toast.className += ' bg-slate-900 border-slate-800 text-white shadow-slate-300';
+        icon = 'info';
+      }
+
+      toast.innerHTML = `
+        <div class="flex items-center space-x-2">
+          <i data-lucide="${icon}" class="w-4 h-4 shrink-0"></i>
+          <span>${message}</span>
+        </div>
+        <button onclick="this.parentElement.remove()" class="p-0.5 hover:opacity-75 transition shrink-0">
+          <i data-lucide="x" class="w-3.5 h-3.5"></i>
+        </button>
+      `;
+
+      container.appendChild(toast);
+      lucide.createIcons();
+
+      // Trigger animation
+      requestAnimationFrame(() => {
+        toast.classList.remove('translate-y-2', 'opacity-0');
+      });
+
+      // Auto dismiss
+      setTimeout(() => {
+        toast.classList.add('opacity-0', 'translate-y-2');
+        setTimeout(() => toast.remove(), 300);
+      }, 4000);
+    }
+
+    function showTaskError(msg) {
+      const box = document.getElementById('task-error-box');
+      if (box) {
+        document.getElementById('task-error-text').textContent = msg;
+        box.classList.remove('hidden');
+        lucide.createIcons();
+      }
+    }
+
+    function hideTaskError() {
+      const box = document.getElementById('task-error-box');
+      if (box) box.classList.add('hidden');
+    }
+
+    async function dismissTaskError() {
+      hideTaskError();
+      try {
+        await fetch('/api/dismiss-error', { method: 'POST' });
+      } catch (e) {}
+    }
+
     async function uploadFiles(files) {
+      const pkm = getActivePkm();
+      if (!pkm) {
+        showToast('Pilih Puskesmas terlebih dahulu sebelum mengunggah foto.', 'warning');
+        return;
+      }
+
+      showToast(`Mengunggah ${files.length} foto ke antrean ${pkm}...`, 'info');
       const formData = new FormData();
-      formData.append('pkm', activePuskesmas);
+      formData.append('pkm', pkm);
       for (let i = 0; i < files.length; i++) {
         formData.append('files', files[i]);
       }
@@ -547,24 +643,32 @@
         const res = await fetch('/api/upload', { method: 'POST', body: formData });
         const data = await res.json();
         if (data.status === 'success') {
-          const statusDiv = document.getElementById('upload-status');
-          document.getElementById('upload-status-text').textContent = `Berhasil mengunggah ${data.total} foto ke antrean!`;
-          statusDiv.classList.remove('hidden');
-          setTimeout(() => statusDiv.classList.add('hidden'), 4000);
+          showToast(`Berhasil menambahkan ${data.total} foto ke antrean!`, 'success');
           refreshData();
+        } else {
+          showToast(data.detail || 'Gagal mengunggah foto.', 'error');
         }
       } catch (err) {
-        alert('Gagal mengunggah foto: ' + err);
+        showToast('Gagal mengunggah foto: ' + err, 'error');
       }
     }
 
     // ACTIONS
     async function startExtraction() {
+      const pkm = getActivePkm();
+      if (!pkm) {
+        showToast('Pilih Puskesmas terlebih dahulu.', 'warning');
+        return;
+      }
+
+      hideTaskError();
       const btn = document.getElementById('btn-extract');
       btn.disabled = true;
 
       const formData = new FormData();
-      formData.append('pkm', activePuskesmas);
+      formData.append('pkm', pkm);
+
+      showToast(`Memulai proses ekstraksi AI untuk ${pkm}...`, 'info');
 
       try {
         const res = await fetch('/api/extract', { method: 'POST', body: formData });
@@ -575,36 +679,45 @@
             setTimeout(startExtraction, 600);
             return;
           } else {
-            alert(err.detail || 'Gagal memulai ekstraksi.');
+            showToast(err.detail || 'Gagal memulai ekstraksi.', 'error');
           }
           btn.disabled = false;
           return;
         }
         pollTaskStatus();
       } catch (err) {
-        alert('Terjadi kesalahan koneksi server.');
+        showToast('Terjadi kesalahan koneksi server.', 'error');
         btn.disabled = false;
       }
     }
 
     async function startGeneration() {
+      const pkm = getActivePkm();
+      if (!pkm) {
+        showToast('Pilih Puskesmas terlebih dahulu.', 'warning');
+        return;
+      }
+
+      hideTaskError();
       const btn = document.getElementById('btn-generate');
       btn.disabled = true;
 
       const formData = new FormData();
-      formData.append('pkm', activePuskesmas);
+      formData.append('pkm', pkm);
+
+      showToast(`Mempersiapkan dokumen Word & PDF untuk ${pkm}...`, 'info');
 
       try {
         const res = await fetch('/api/generate', { method: 'POST', body: formData });
         if (!res.ok) {
           const err = await res.json();
-          alert(err.detail || 'Gagal memulai cetak.');
+          showToast(err.detail || 'Gagal memulai cetak.', 'error');
           btn.disabled = false;
           return;
         }
         pollTaskStatus();
       } catch (err) {
-        alert('Terjadi kesalahan koneksi server.');
+        showToast('Terjadi kesalahan koneksi server.', 'error');
         btn.disabled = false;
       }
     }
@@ -621,13 +734,21 @@
         const badgeStatus = document.getElementById('system-status-text');
 
         if (task.status === 'extracting' || task.status === 'generating') {
+          hideTaskError();
           progressBox.classList.remove('hidden');
           document.getElementById('task-label').textContent = task.message;
           btnExtract.disabled = true;
           btnGenerate.disabled = true;
           badgeStatus.textContent = task.status === 'extracting' ? 'Mengekstrak AI...' : 'Mencetak Dokumen...';
+        } else if (task.status === 'error') {
+          progressBox.classList.add('hidden');
+          btnExtract.disabled = false;
+          btnGenerate.disabled = false;
+          badgeStatus.textContent = 'Kendala Terjadi';
+          showTaskError(task.message || task.last_error);
         } else {
           if (!progressBox.classList.contains('hidden') && task.status === 'done') {
+            showToast(task.message || 'Proses berhasil diselesaikan!', 'success');
             refreshData();
           }
           progressBox.classList.add('hidden');
@@ -639,24 +760,54 @@
     }
 
     async function openExcel() {
+      const pkm = getActivePkm();
+      if (!pkm) {
+        showToast('Pilih Puskesmas terlebih dahulu.', 'warning');
+        return;
+      }
+
+      showToast(`Membuka file Excel untuk ${pkm}...`, 'info');
       const formData = new FormData();
-      formData.append('pkm', activePuskesmas);
+      formData.append('pkm', pkm);
       try {
         const res = await fetch('/api/open-excel', { method: 'POST', body: formData });
-        if (!res.ok) {
-          const err = await res.json();
-          alert(err.detail || 'Gagal membuka Excel.');
+        const data = await res.json();
+        if (res.ok) {
+          showToast(`File Rekap_${pkm}.xlsx terbuka di Microsoft Excel!`, 'success');
+          refreshData();
+        } else {
+          showToast(data.detail || 'Gagal membuka Excel.', 'error');
         }
       } catch (err) {
-        alert('Gagal menghubungi server.');
+        showToast('Gagal menghubungi server.', 'error');
       }
     }
 
     async function openFolder(type) {
+      const pkm = getActivePkm();
+      if (!pkm) {
+        showToast('Pilih Puskesmas terlebih dahulu.', 'warning');
+        return;
+      }
+
+      const folderName = type === 'masuk' ? 'Foto Masuk' : (type === 'arsip' ? 'Foto Arsip' : 'Hasil Puskesmas');
+      showToast(`Membuka folder ${folderName}...`, 'info');
+
       const formData = new FormData();
-      formData.append('pkm', activePuskesmas);
+      formData.append('pkm', pkm);
       formData.append('folder_type', type);
-      await fetch('/api/open-folder', { method: 'POST', body: formData });
+
+      try {
+        const res = await fetch('/api/open-folder', { method: 'POST', body: formData });
+        const data = await res.json();
+        if (res.ok) {
+          showToast(`Folder ${folderName} terbuka di Windows Explorer! (Periksa taskbar jika tertutup browser)`, 'success');
+        } else {
+          showToast(data.detail || 'Gagal membuka folder.', 'error');
+        }
+      } catch (e) {
+        showToast('Gagal menghubungi server.', 'error');
+      }
     }
 
     function confirmReset() {
@@ -668,31 +819,54 @@
 
     async function executeReset() {
       closeModalReset();
+      const pkm = getActivePkm();
+      showToast(`Mereset data untuk ${pkm}...`, 'info');
+
       const formData = new FormData();
-      formData.append('pkm', activePuskesmas);
+      formData.append('pkm', pkm);
 
       try {
         const res = await fetch('/api/reset-pkm', { method: 'POST', body: formData });
+        const data = await res.json();
         if (!res.ok) {
-          const err = await res.json();
-          alert(err.detail || 'Gagal mereset data.');
+          showToast(data.detail || 'Gagal mereset data.', 'error');
           return;
         }
-        alert(`Data untuk ${activePuskesmas} berhasil direset.`);
+        showToast(`Data untuk ${pkm} berhasil direset total.`, 'success');
         refreshData();
       } catch (err) {
-        alert('Gagal menghubungi server.');
+        showToast('Gagal menghubungi server.', 'error');
       }
     }
 
-    function promptNewPuskesmas() {
+    async function promptNewPuskesmas() {
       const name = prompt('Masukkan nama Puskesmas baru (misal: PUSKESMAS KRAMAT):');
       if (name && name.trim()) {
         const cleanName = name.trim().toUpperCase();
-        activePuskesmas = cleanName.startsWith('PUSKESMAS') ? cleanName : `PUSKESMAS ${cleanName}`;
-        refreshData();
+        const pkmName = cleanName.startsWith('PUSKESMAS') ? cleanName : `PUSKESMAS ${cleanName}`;
+
+        showToast(`Menyiapkan workspace untuk ${pkmName}...`, 'info');
+        const formData = new FormData();
+        formData.append('pkm', pkmName);
+
+        try {
+          const res = await fetch('/api/create-puskesmas', { method: 'POST', body: formData });
+          const data = await res.json();
+          if (res.ok) {
+            activePuskesmas = pkmName;
+            await fetchSystemStatus();
+            showToast(`${pkmName} berhasil dibuat & siap digunakan!`, 'success');
+          } else {
+            showToast(data.detail || 'Gagal menambahkan Puskesmas baru.', 'error');
+          }
+        } catch (e) {
+          showToast('Gagal menghubungi server.', 'error');
+        }
       }
     }
   </script>
+
+  <!-- TOAST CONTAINER -->
+  <div id="toast-container" class="fixed bottom-5 right-5 z-50 flex flex-col space-y-2 pointer-events-none max-w-sm w-full"></div>
 </body>
 </html>

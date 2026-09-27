@@ -1295,8 +1295,7 @@ def mode_generate(config, word_app=None, target_pkm=None):
             else:
                 print(f" [INFO] Tidak ada pasien DARAH dengan parameter lab lengkap untuk {nama_pkm}.", flush=True)
 
-        # 2. Validasi & Cetak URIN
-        urin_list = pkm_groups_urin.get(nama_pkm, [])
+        # 2. Validasi & Cetak URIN (urin_list sudah dimuat dari ws_urin)
         if urin_list:
             print(f"\n [VALIDASI URIN] Memeriksa kelengkapan parameter lab ({len(urin_list)} pasien)...", flush=True)
             valid_urin = []

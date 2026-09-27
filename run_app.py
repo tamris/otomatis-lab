@@ -38,4 +38,4 @@ if __name__ == "__main__":
     print(" (Tekan Ctrl + C untuk mematikan server)\n" + "-" * 58 + "\n")
 
     import uvicorn
-    uvicorn.run("app:app", host="127.0.0.1", port=8000, log_level="info")
+    uvicorn.run("app:app", host="127.0.0.1", port=8000, reload=True, log_level="info")

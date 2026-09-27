@@ -85,6 +85,12 @@ def get_all_puskesmas_list() -> List[str]:
             if d.is_dir() and not d.name.startswith("."):
                 pkm_set.add(d.name)
 
+    fa = BASE_DIR / "foto_arsip"
+    if fa.exists():
+        for d in fa.iterdir():
+            if d.is_dir() and not d.name.startswith("."):
+                pkm_set.add(d.name)
+
     # Tambahkan default dari config jika ada
     cfg = otomasi_lab.load_config()
     def_pkm = cfg.get("PUSKESMAS")
@@ -292,17 +298,17 @@ def run_extraction_worker(pkm: Optional[str] = None):
 
     try:
         config = otomasi_lab.load_config()
-        # Scoped reference data (Balapulang only)
-        pkm_ref_by_no, pkm_ref_by_name = (None, None)
-        if pkm and "BALAPULANG" in pkm.upper():
-            pkm_ref_by_no, pkm_ref_by_name = otomasi_lab.load_rujukan_database()
+        # Muat database rujukan lokal jika ada
+        ref_by_no, ref_by_name = otomasi_lab.load_reference_patients()
 
-        otomasi_lab.mode_extract(config, pkm_ref_by_no, pkm_ref_by_name, target_pkm=pkm)
+        otomasi_lab.mode_extract(config, ref_by_no, ref_by_name, target_pkm=pkm)
 
         with task_lock:
             current_task["status"] = "done"
-            current_task["message"] = "Ekstraksi foto selesai! Data telah tersimpan di Excel."
+            current_task["message"] = f"Ekstraksi foto untuk {pkm or 'Puskesmas'} selesai! Data tersimpan di Excel."
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         with task_lock:
             current_task["status"] = "error"
             current_task["message"] = f"Terjadi kesalahan saat ekstraksi: {str(e)}"
@@ -378,7 +384,8 @@ def api_reset_pkm(pkm: str = Form(...)):
 
 @app.post("/api/open-folder")
 def api_open_folder(pkm: str = Form(...), folder_type: str = Form("hasil")):
-    """Membuka folder di Windows Explorer."""
+    """Membuka folder langsung di Windows Explorer menggunakan native ShellExecute."""
+    pkm = pkm.strip()
     if folder_type == "hasil":
         target = BASE_DIR / "HASIL_PUSKESMAS" / pkm
     elif folder_type == "masuk":
@@ -389,19 +396,71 @@ def api_open_folder(pkm: str = Form(...), folder_type: str = Form("hasil")):
         target = BASE_DIR
 
     target.mkdir(parents=True, exist_ok=True)
-    subprocess.Popen(f'explorer "{target.resolve()}"')
-    return {"status": "opened", "path": str(target)}
+    try:
+        os.startfile(str(target.resolve()))
+        return {"status": "opened", "path": str(target), "message": f"Folder {folder_type} ({pkm}) berhasil dibuka di Windows Explorer."}
+    except Exception as e:
+        subprocess.Popen(f'explorer "{target.resolve()}"')
+        return {"status": "opened", "path": str(target), "message": f"Folder {folder_type} ({pkm}) dibuka via explorer."}
 
 
 @app.post("/api/open-excel")
 def api_open_excel(pkm: str = Form(...)):
-    """Membuka file Rekap_[pkm].xlsx langsung di Microsoft Excel."""
-    rekap_file = BASE_DIR / "HASIL_PUSKESMAS" / pkm / f"Rekap_{pkm}.xlsx"
-    if not rekap_file.exists():
-        raise HTTPException(status_code=404, detail="File Excel rekap belum dibuat.")
+    """Membuka file Rekap_[pkm].xlsx langsung di Microsoft Excel. Otomatis buat file dari template jika belum ada."""
+    pkm = pkm.strip()
+    target_dir = BASE_DIR / "HASIL_PUSKESMAS" / pkm
+    target_dir.mkdir(parents=True, exist_ok=True)
+    rekap_file = target_dir / f"Rekap_{pkm}.xlsx"
 
-    os.startfile(str(rekap_file.resolve()))
-    return {"status": "opened", "path": str(rekap_file)}
+    # Jika file belum ada, inisialisasi dari Template Exel.xlsx agar tidak error 404
+    if not rekap_file.exists():
+        cfg = otomasi_lab.load_config()
+        tmpl = BASE_DIR / "Template Exel.xlsx"
+        ref_by_no = None
+        if "BALAPULANG" in pkm.upper():
+            ref_by_no, _ = otomasi_lab.load_reference_patients()
+        otomasi_lab.init_rekap_excel(rekap_file, tmpl, pkm, cfg, ref_by_no=ref_by_no)
+
+    try:
+        os.startfile(str(rekap_file.resolve()))
+        return {"status": "opened", "path": str(rekap_file), "message": f"File 'Rekap_{pkm}.xlsx' berhasil dibuka di Microsoft Excel."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Gagal membuka Microsoft Excel: {str(e)}")
+
+
+@app.post("/api/create-puskesmas")
+def api_create_puskesmas(pkm: str = Form(...)):
+    """Membuat folder kerja dan file rekap untuk Puskesmas baru."""
+    pkm = pkm.strip().upper()
+    if not pkm.startswith("PUSKESMAS"):
+        pkm = f"PUSKESMAS {pkm}"
+
+    (BASE_DIR / "foto_masuk" / pkm).mkdir(parents=True, exist_ok=True)
+    (BASE_DIR / "foto_arsip" / pkm).mkdir(parents=True, exist_ok=True)
+    target_hasil = BASE_DIR / "HASIL_PUSKESMAS" / pkm
+    target_hasil.mkdir(parents=True, exist_ok=True)
+
+    rekap_file = target_hasil / f"Rekap_{pkm}.xlsx"
+    if not rekap_file.exists():
+        cfg = otomasi_lab.load_config()
+        tmpl = BASE_DIR / "Template Exel.xlsx"
+        ref_by_no = None
+        if "BALAPULANG" in pkm:
+            ref_by_no, _ = otomasi_lab.load_reference_patients()
+        otomasi_lab.init_rekap_excel(rekap_file, tmpl, pkm, cfg, ref_by_no=ref_by_no)
+
+    return {"status": "success", "pkm": pkm, "message": f"{pkm} berhasil ditambahkan dan siap digunakan."}
+
+
+@app.post("/api/dismiss-error")
+def api_dismiss_error():
+    """Mereset status task dari error kembali ke idle."""
+    global current_task
+    with task_lock:
+        current_task["status"] = "idle"
+        current_task["message"] = "Sistem siap digunakan."
+        current_task["last_error"] = None
+    return {"status": "success"}
 
 
 @app.post("/api/close-excel")
