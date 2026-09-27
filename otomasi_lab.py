@@ -453,11 +453,61 @@ YELLOW_FILL = PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="s
 NO_FILL = PatternFill(fill_type=None)
 
 
+def sort_sheet_rows_by_no(ws):
+    """
+    Mengurutkan baris data di worksheet (mulai baris 2) berdasarkan kolom NO secara numerik ascending (1, 2, 3, ...).
+    Menjaga header (baris 1) tetap utuh. Baris kosong / non-angka ditaruh di paling bawah.
+    """
+    if ws.max_row <= 2:
+        return
+
+    max_col = ws.max_column
+    rows_data = []
+
+    for r in range(2, ws.max_row + 1):
+        vals = [ws.cell(r, c).value for c in range(1, max_col + 1)]
+        # Baris dianggap valid jika ada NO, NAMA, atau nilai lainnya
+        if any(v is not None and str(v).strip() != "" for v in vals):
+            rows_data.append(vals)
+
+    if not rows_data:
+        return
+
+    def get_sort_key(row):
+        no_val = row[0]  # Kolom 1 adalah NO
+        if no_val is None or str(no_val).strip() == "":
+            return (999999, "")
+        try:
+            return (int(no_val), "")
+        except (ValueError, TypeError):
+            try:
+                return (int(float(no_val)), "")
+            except (ValueError, TypeError):
+                import re
+                nums = re.findall(r'\d+', str(no_val))
+                if nums:
+                    return (int(nums[0]), str(no_val))
+                return (999998, str(no_val))
+
+    rows_data.sort(key=get_sort_key)
+
+    # Tulis ulang data yang sudah terurut
+    for r_idx, row_vals in enumerate(rows_data, start=2):
+        for c_idx, val in enumerate(row_vals, start=1):
+            cell = ws.cell(r_idx, c_idx)
+            cell.value = val
+
+    # Bersihkan sisa baris di bawah jika ada baris kosong berlebih
+    if ws.max_row > len(rows_data) + 1:
+        ws.delete_rows(len(rows_data) + 2, ws.max_row - (len(rows_data) + 1))
+
+
 def apply_excel_styling(wb):
     """
     Format otomatis tampilan Excel:
-    1. Memberi border tipis (All Borders) ke seluruh tabel data & header.
-    2. Memberi highlight warna kuning lembut (soft yellow) jika pasien belum memiliki hasil lab.
+    1. Mengurutkan seluruh baris data berdasarkan NO (1, 2, 3, ...) secara ascending.
+    2. Memberi border tipis (All Borders) ke seluruh tabel data & header.
+    3. Memberi highlight warna kuning lembut (soft yellow) jika pasien belum memiliki hasil lab.
        Jika hasil lab sudah terisi, warna kuning otomatis dibersihkan.
     """
     for s_name in ["DARAH", "URIN"]:
@@ -467,11 +517,14 @@ def apply_excel_styling(wb):
         if ws.max_row < 1:
             continue
 
-        # Header styling
+        # 1. Otomatis urutkan baris berdasarkan NO (1, 2, 3, ...)
+        sort_sheet_rows_by_no(ws)
+
+        # 2. Header styling
         for c in range(1, ws.max_column + 1):
             ws.cell(1, c).border = ALL_BORDER
 
-        # Data rows styling
+        # 3. Data rows styling
         lab_start_col = 8  # Kolom 8 ke atas adalah parameter lab
         for r in range(2, ws.max_row + 1):
             no_val = ws.cell(r, 1).value
