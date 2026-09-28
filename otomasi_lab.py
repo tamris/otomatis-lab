@@ -1499,15 +1499,24 @@ def mode_generate(config, word_app=None, target_pkm=None, force=False):
 
         # Deteksi status update berdasarkan perbandingan timestamp Excel vs PDF
         rekap_mtime = rekap_file.stat().st_mtime
-        darah_up_to_date = out_darah_docx.exists() and out_darah_pdf.exists() and (out_darah_pdf.stat().st_mtime >= rekap_mtime - 1.0)
-        urin_up_to_date = out_urin_docx.exists() and out_urin_pdf.exists() and (out_urin_pdf.stat().st_mtime >= rekap_mtime - 1.0)
+        pdf_darah_mtime = out_darah_pdf.stat().st_mtime if out_darah_pdf.exists() else 0
+        pdf_urin_mtime = out_urin_pdf.stat().st_mtime if out_urin_pdf.exists() else 0
 
-        # Jika sudah pernah dicetak dan TIDAK ADA perubahan data di Excel sejak cetak terakhir -> Skip otomatis!
-        if darah_up_to_date and urin_up_to_date and not force:
+        docs_complete = out_darah_docx.exists() and out_darah_pdf.exists() and out_urin_docx.exists() and out_urin_pdf.exists()
+
+        # Puskesmas dianggap UP-TO-DATE HANYA JIKA:
+        # 1. Seluruh dokumen (Darah & Urin) sudah ada lengkap
+        # 2. KEDUA file PDF dibuat SETELAH file Excel terakhir kali disimpan
+        # 3. Pengguna TIDAK meminta khusus Puskesmas ini lewat target_pkm
+        # 4. Pengguna TIDAK mengaktifkan opsi --force
+        is_up_to_date = docs_complete and (pdf_darah_mtime >= rekap_mtime - 1.0) and (pdf_urin_mtime >= rekap_mtime - 1.0)
+
+        if is_up_to_date and not force and not target_pkm:
             print("\n" + "=" * 55, flush=True)
             print(f" >>> {nama_pkm}: SUDAH UP-TO-DATE (DILEWATI) <<<", flush=True)
             print(f" [SKIP] Tidak ada perubahan data pada {rekap_file.name} sejak cetak terakhir.", flush=True)
-            print("        (Sistem otomatis mencetak ulang jika Excel diedit, atau gunakan '--force')", flush=True)
+            print("        (Jika baru saja edit di Excel, pastikan tekan Ctrl+S untuk simpan)", flush=True)
+            print("        (Atau gunakan opsi '--force' jika ingin mencetak ulang)", flush=True)
             print("=" * 55, flush=True)
             continue
 
@@ -1515,8 +1524,10 @@ def mode_generate(config, word_app=None, target_pkm=None, force=False):
         print(f" >>> MEMPROSES CETAK: {nama_pkm} <<<", flush=True)
         if force:
             print(" [INFO] Mode '--force' aktif: Mencetak ulang seluruh dokumen Word & PDF...", flush=True)
-        elif not (out_darah_pdf.exists() and out_urin_pdf.exists()):
-            print(" [INFO] Dokumen cetak belum ada -> Membuat dokumen All-in-One baru...", flush=True)
+        elif target_pkm:
+            print(f" [INFO] Puskesmas '{nama_pkm}' diminta secara khusus -> Memproses cetak...", flush=True)
+        elif not docs_complete:
+            print(" [INFO] Dokumen cetak belum lengkap -> Membuat dokumen All-in-One baru...", flush=True)
         else:
             print(f" [INFO] Terdeteksi data baru/perubahan pada '{rekap_file.name}' -> Otomatis memperbarui dokumen cetak...", flush=True)
         print("=" * 55, flush=True)
@@ -1545,61 +1556,55 @@ def mode_generate(config, word_app=None, target_pkm=None, force=False):
 
         # 1. Validasi & Cetak DARAH
         if darah_list:
-            if darah_up_to_date and not force:
-                print(f"\n [SKIP DARAH] 'All_Hasil_Darah_{nama_pkm}.pdf' sudah up-to-date (tidak ada editan data darah).", flush=True)
-            else:
-                print(f"\n [VALIDASI DARAH] Memeriksa kelengkapan parameter lab ({len(darah_list)} pasien)...", flush=True)
-                valid_darah = []
-                for p in darah_list:
-                    nama_p = p.get("NAMA", "NONAME")
-                    is_ok, missing = validate_darah_patient(p)
-                    if is_ok:
-                        valid_darah.append(p)
-                    else:
-                        print(f"Skip cetak {nama_p}: Parameter lab belum lengkap", flush=True)
-
-                if valid_darah:
-                    t0 = time.time()
-                    template_darah = BASE_DIR / "NEW TEMPLATE SAT DARAH.docx"
-
-                    darah_dicts = [prepare_darah_dict(p, config, nama_pkm) for p in valid_darah]
-                    with MailMerge(template_darah) as mm:
-                        mm.merge_templates(darah_dicts, separator="page_break")
-                        mm.write(str(out_darah_docx))
-
-                    convert_single_docx_to_pdf_fast(word_app, out_darah_docx, out_darah_pdf)
-                    print(f" [PDF] Selesai: All_Hasil_Darah_{nama_pkm}.pdf ({len(valid_darah)} pasien valid) - {time.time() - t0:.1f} detik", flush=True)
+            print(f"\n [VALIDASI DARAH] Memeriksa kelengkapan parameter lab ({len(darah_list)} pasien)...", flush=True)
+            valid_darah = []
+            for p in darah_list:
+                nama_p = p.get("NAMA", "NONAME")
+                is_ok, missing = validate_darah_patient(p)
+                if is_ok:
+                    valid_darah.append(p)
                 else:
-                    print(f" [INFO] Tidak ada pasien DARAH dengan parameter lab lengkap untuk {nama_pkm}.", flush=True)
+                    print(f"Skip cetak {nama_p}: Parameter lab belum lengkap", flush=True)
+
+            if valid_darah:
+                t0 = time.time()
+                template_darah = BASE_DIR / "NEW TEMPLATE SAT DARAH.docx"
+
+                darah_dicts = [prepare_darah_dict(p, config, nama_pkm) for p in valid_darah]
+                with MailMerge(template_darah) as mm:
+                    mm.merge_templates(darah_dicts, separator="page_break")
+                    mm.write(str(out_darah_docx))
+
+                convert_single_docx_to_pdf_fast(word_app, out_darah_docx, out_darah_pdf)
+                print(f" [PDF] Selesai: All_Hasil_Darah_{nama_pkm}.pdf ({len(valid_darah)} pasien valid) - {time.time() - t0:.1f} detik", flush=True)
+            else:
+                print(f" [INFO] Tidak ada pasien DARAH dengan parameter lab lengkap untuk {nama_pkm}.", flush=True)
 
         # 2. Validasi & Cetak URIN
         if urin_list:
-            if urin_up_to_date and not force:
-                print(f"\n [SKIP URIN] 'All_Hasil_Urin_{nama_pkm}.pdf' sudah up-to-date (tidak ada editan data urin).", flush=True)
-            else:
-                print(f"\n [VALIDASI URIN] Memeriksa kelengkapan parameter lab ({len(urin_list)} pasien)...", flush=True)
-                valid_urin = []
-                for p in urin_list:
-                    nama_p = p.get("NAMA", "NONAME")
-                    is_ok, missing = validate_urin_patient(p)
-                    if is_ok:
-                        valid_urin.append(p)
-                    else:
-                        print(f"Skip cetak {nama_p}: Parameter lab belum lengkap", flush=True)
-
-                if valid_urin:
-                    t0 = time.time()
-                    template_urin = BASE_DIR / "NEW TEMPLATE SAT URIN.docx"
-
-                    urin_dicts = [prepare_urin_dict(p, config, nama_pkm) for p in valid_urin]
-                    with MailMerge(template_urin) as mm:
-                        mm.merge_templates(urin_dicts, separator="page_break")
-                        mm.write(str(out_urin_docx))
-
-                    convert_single_docx_to_pdf_fast(word_app, out_urin_docx, out_urin_pdf)
-                    print(f" [PDF] Selesai: All_Hasil_Urin_{nama_pkm}.pdf ({len(valid_urin)} pasien valid) - {time.time() - t0:.1f} detik", flush=True)
+            print(f"\n [VALIDASI URIN] Memeriksa kelengkapan parameter lab ({len(urin_list)} pasien)...", flush=True)
+            valid_urin = []
+            for p in urin_list:
+                nama_p = p.get("NAMA", "NONAME")
+                is_ok, missing = validate_urin_patient(p)
+                if is_ok:
+                    valid_urin.append(p)
                 else:
-                    print(f" [INFO] Tidak ada pasien URIN dengan parameter lab lengkap untuk {nama_pkm}.", flush=True)
+                    print(f"Skip cetak {nama_p}: Parameter lab belum lengkap", flush=True)
+
+            if valid_urin:
+                t0 = time.time()
+                template_urin = BASE_DIR / "NEW TEMPLATE SAT URIN.docx"
+
+                urin_dicts = [prepare_urin_dict(p, config, nama_pkm) for p in valid_urin]
+                with MailMerge(template_urin) as mm:
+                    mm.merge_templates(urin_dicts, separator="page_break")
+                    mm.write(str(out_urin_docx))
+
+                convert_single_docx_to_pdf_fast(word_app, out_urin_docx, out_urin_pdf)
+                print(f" [PDF] Selesai: All_Hasil_Urin_{nama_pkm}.pdf ({len(valid_urin)} pasien valid) - {time.time() - t0:.1f} detik", flush=True)
+            else:
+                print(f" [INFO] Tidak ada pasien URIN dengan parameter lab lengkap untuk {nama_pkm}.", flush=True)
 
     print("\n" + "=" * 60, flush=True)
     print("   SELURUH PROSES CETAK DOKUMEN SELESAI!", flush=True)
