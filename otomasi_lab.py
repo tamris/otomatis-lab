@@ -987,12 +987,19 @@ def update_rekap_excel(rekap_path, template_source, jenis, patients, config, nam
                     update_if_empty(target_col, p_val)
 
     apply_excel_styling(wb)
-    try:
-        wb.save(rekap_path)
-        return True
-    except PermissionError:
-        print(f"\n [ERROR] Gagal menyimpan '{rekap_path.name}' karena sedang DIBUKA di Microsoft Excel! Harap TUTUP file tersebut.", flush=True)
-        return False
+    # Coba simpan hingga 4 kali jika file sedang dibuka di Microsoft Excel
+    for save_att in range(4):
+        try:
+            wb.save(rekap_path)
+            return True
+        except PermissionError:
+            if save_att < 3:
+                print(f"\n [PERINGATAN] File '{rekap_path.name}' sedang DIBUKA di Microsoft Excel! Harap segera TUTUP file tersebut (mencoba lagi dalam 5 detik, percobaan {save_att+1}/3)...", flush=True)
+                time.sleep(5)
+            else:
+                print(f"\n [ERROR] Gagal menyimpan '{rekap_path.name}' karena masih DIBUKA di Microsoft Excel! Harap TUTUP file tersebut.", flush=True)
+                return False
+    return False
 
 
 def validate_darah_patient(p):
