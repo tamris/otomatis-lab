@@ -1475,7 +1475,8 @@ def mode_generate(config, word_app=None, target_pkm=None, force=False):
 
     pkm_dirs = sorted([d for d in hasil_base.iterdir() if d.is_dir()], key=lambda x: x.name)
     if target_pkm:
-        pkm_dirs = [d for d in pkm_dirs if d.name.strip().upper() == target_pkm.strip().upper()]
+        target_clean = target_pkm.strip().upper()
+        pkm_dirs = [d for d in pkm_dirs if target_clean in d.name.strip().upper()]
 
     if not pkm_dirs:
         print(f" [INFO] Tidak ada subfolder Puskesmas ditemukan di '{hasil_base.name}/'.", flush=True)
@@ -1496,19 +1497,28 @@ def mode_generate(config, word_app=None, target_pkm=None, force=False):
         out_urin_docx = pkm_out_dir / f"All_Hasil_Urin_{nama_pkm}.docx"
         out_urin_pdf = pkm_out_dir / f"All_Hasil_Urin_{nama_pkm}.pdf"
 
-        darah_done = out_darah_docx.exists() and out_darah_pdf.exists()
-        urin_done = out_urin_docx.exists() and out_urin_pdf.exists()
+        # Deteksi status update berdasarkan perbandingan timestamp Excel vs PDF
+        rekap_mtime = rekap_file.stat().st_mtime
+        darah_up_to_date = out_darah_docx.exists() and out_darah_pdf.exists() and (out_darah_pdf.stat().st_mtime >= rekap_mtime - 1.0)
+        urin_up_to_date = out_urin_docx.exists() and out_urin_pdf.exists() and (out_urin_pdf.stat().st_mtime >= rekap_mtime - 1.0)
 
-        if darah_done and urin_done and not force:
+        # Jika sudah pernah dicetak dan TIDAK ADA perubahan data di Excel sejak cetak terakhir -> Skip otomatis!
+        if darah_up_to_date and urin_up_to_date and not force:
             print("\n" + "=" * 55, flush=True)
-            print(f" >>> {nama_pkm}: SUDAH DICETAK (DILEWATI) <<<", flush=True)
-            print(f" [SKIP] Seluruh dokumen Word & PDF untuk {nama_pkm} sudah lengkap ada.", flush=True)
-            print("        (Gunakan opsi '--force' jika ingin mencetak ulang Puskesmas ini)", flush=True)
+            print(f" >>> {nama_pkm}: SUDAH UP-TO-DATE (DILEWATI) <<<", flush=True)
+            print(f" [SKIP] Tidak ada perubahan data pada {rekap_file.name} sejak cetak terakhir.", flush=True)
+            print("        (Sistem otomatis mencetak ulang jika Excel diedit, atau gunakan '--force')", flush=True)
             print("=" * 55, flush=True)
             continue
 
         print("\n" + "=" * 55, flush=True)
         print(f" >>> MEMPROSES CETAK: {nama_pkm} <<<", flush=True)
+        if force:
+            print(" [INFO] Mode '--force' aktif: Mencetak ulang seluruh dokumen Word & PDF...", flush=True)
+        elif not (out_darah_pdf.exists() and out_urin_pdf.exists()):
+            print(" [INFO] Dokumen cetak belum ada -> Membuat dokumen All-in-One baru...", flush=True)
+        else:
+            print(f" [INFO] Terdeteksi data baru/perubahan pada '{rekap_file.name}' -> Otomatis memperbarui dokumen cetak...", flush=True)
         print("=" * 55, flush=True)
 
         # Standardisasi styling dan format nilai Excel sebelum pembacaan & pencetakan (jika file bisa diedit)
@@ -1535,8 +1545,8 @@ def mode_generate(config, word_app=None, target_pkm=None, force=False):
 
         # 1. Validasi & Cetak DARAH
         if darah_list:
-            if darah_done and not force:
-                print(f"\n [SKIP DARAH] 'All_Hasil_Darah_{nama_pkm}.pdf' sudah ada. Melewati cetak Darah...", flush=True)
+            if darah_up_to_date and not force:
+                print(f"\n [SKIP DARAH] 'All_Hasil_Darah_{nama_pkm}.pdf' sudah up-to-date (tidak ada editan data darah).", flush=True)
             else:
                 print(f"\n [VALIDASI DARAH] Memeriksa kelengkapan parameter lab ({len(darah_list)} pasien)...", flush=True)
                 valid_darah = []
@@ -1564,8 +1574,8 @@ def mode_generate(config, word_app=None, target_pkm=None, force=False):
 
         # 2. Validasi & Cetak URIN
         if urin_list:
-            if urin_done and not force:
-                print(f"\n [SKIP URIN] 'All_Hasil_Urin_{nama_pkm}.pdf' sudah ada. Melewati cetak Urin...", flush=True)
+            if urin_up_to_date and not force:
+                print(f"\n [SKIP URIN] 'All_Hasil_Urin_{nama_pkm}.pdf' sudah up-to-date (tidak ada editan data urin).", flush=True)
             else:
                 print(f"\n [VALIDASI URIN] Memeriksa kelengkapan parameter lab ({len(urin_list)} pasien)...", flush=True)
                 valid_urin = []
@@ -1604,6 +1614,7 @@ def main():
     parser.add_argument("--extract", action="store_true", help="Mode Ekstraksi: Ekstrak foto ke Excel & buat FOLDER_PASIEN (tanpa cetak)")
     parser.add_argument("--generate", action="store_true", help="Mode Cetak: Validasi kelengkapan data Excel & cetak All-in-One Word + PDF")
     parser.add_argument("--force", action="store_true", help="Paksa cetak ulang seluruh dokumen meskipun file hasil cetak sudah ada")
+    parser.add_argument("--pkm", type=str, default=None, help="Target nama Puskesmas tertentu (contoh: --pkm 'BOJONG' atau --pkm 'BALAPULANG')")
     args = parser.parse_args()
 
     config = load_config()
@@ -1632,9 +1643,9 @@ def main():
 
     try:
         if args.extract:
-            mode_extract(config, ref_by_no, ref_by_name)
+            mode_extract(config, ref_by_no, ref_by_name, target_pkm=args.pkm)
         elif args.generate:
-            mode_generate(config, word_app=word_app, force=args.force)
+            mode_generate(config, word_app=word_app, target_pkm=args.pkm, force=args.force)
         else:
             # Jika dijalankan tanpa argumen: Cek apakah ada file foto nyata di 'foto_masuk/'
             input_base_dir = BASE_DIR / "foto_masuk"
@@ -1646,10 +1657,10 @@ def main():
 
             if has_photos:
                 print("\n [INFO] Ditemukan file foto di 'foto_masuk/'. Menjalankan: MODE EKSTRAKSI (--extract)...", flush=True)
-                mode_extract(config, ref_by_no, ref_by_name)
+                mode_extract(config, ref_by_no, ref_by_name, target_pkm=args.pkm)
             else:
                 print("\n [INFO] 'foto_masuk/' tidak berisi file foto baru. Menjalankan: MODE CETAK (--generate)...", flush=True)
-                mode_generate(config, word_app=word_app, force=args.force)
+                mode_generate(config, word_app=word_app, target_pkm=args.pkm, force=args.force)
     finally:
         if word_app:
             try:
