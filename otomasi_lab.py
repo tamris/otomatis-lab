@@ -151,9 +151,11 @@ TUGAS:
 
 2. Ekstrak data pasien dan seluruh hasil pemeriksaannya:
    - Perhatikan nomor urut (NO), NAMA, COMPANY (nama faskes/Puskesmas jika ada), dan garis horizontal tabel. Jangan tertukar antar baris.
+   - PENTING TENTANG KOLOM NOMOR (NO):
+     * Perhatikan angka pada kolom 'NO' paling kiri dengan sangat teliti! Petugas lab sering memakai lembar formulir cetakan bernomor 1-20, lalu MENAMBAHKAN TULISAN TANGAN angka puluhan di depannya (misalnya: angka '2' di depan 1-20 menjadi 21 s/d 40; angka '4' di depan 1-9 menjadi 41 s/d 49 lalu lanjut 50 s/d 60; angka '6' di depan 1-5 menjadi 61 s/d 65). Pastikan Anda membaca nomor urut yang sebenarnya (misal: 21, 22... 41, 42... 61, 62...), BUKAN angka cetakan dasarnya!
+     * Jika kolom 'NAME' kosong (tidak ada nama orang tertulis), TETAP EKSTRAK baris tersebut! Isi "NAMA": null, dan pastikan field "NO" terisi nomor urutnya dengan benar.
    - PENTING TENTANG BARIS DENGAN HASIL LAB KOSONG:
-     * Jika suatu baris memiliki NAMA atau NOMOR pasien (misal No 4 AROFAH, No 5 MUCHAMAD WILDANUL MUNIR, No 6 ARIF RAHMAN HAKIM, dll.), TETAP EKSTRAK baris tersebut! Tuliskan NO dan NAMA-nya, sedangkan kolom-kolom nilai pemeriksaannya yang kosong cukup isi null. JANGAN PERNAH MELEWATKAN baris yang memiliki nama atau nomor pasien!
-     * HANYA abaikan baris yang BENAR-BENAR KOSONG MELOMPONG (tidak ada nama, tidak ada nomor, dan tidak ada nilai lab apa pun).
+     * Jika suatu baris memiliki NAMA atau NOMOR pasien, TETAP EKSTRAK baris tersebut jika ada nilai pemeriksaannya! Jika baris tersebut hanya ada nomor tapi seluruh nilai labnya kosong melompong (misal hanya coretan atau tanda centang tanpa angka), kolom nilai pemeriksaannya isi null.
    - Ekstrak NO (angka), NAMA (jika ada), dan seluruh nilai kolom pemeriksaan.
    - PENTING UNTUK TABEL HEMATOLOGI / DARAH RUTIN:
      * "Hemoglobin": nilai Hb (misal 12.0)
