@@ -51,6 +51,41 @@ def load_config(config_path=BASE_DIR / "config.txt"):
     return cfg
 
 
+def load_workbook_safe(file_path, data_only=True):
+    """
+    Membaca file Excel secara aman, bahkan jika file sedang dibuka di Microsoft Excel.
+    Pada sistem Windows, jika file .xlsx sedang dibuka di Excel, pemanggilan standar
+    openpyxl.load_workbook akan melempar PermissionError karena mode exclusive lock.
+    Fungsi ini memanfaatkan Windows API (FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+    untuk membaca byte data langsung ke memori tanpa perlu menutup aplikasi Excel.
+    """
+    p = Path(file_path)
+    try:
+        return openpyxl.load_workbook(str(p), data_only=data_only)
+    except PermissionError:
+        try:
+            import io
+            import win32file
+            import win32con
+
+            h = win32file.CreateFile(
+                str(p.resolve()),
+                win32con.GENERIC_READ,
+                win32con.FILE_SHARE_READ | win32con.FILE_SHARE_WRITE | win32con.FILE_SHARE_DELETE,
+                None,
+                win32con.OPEN_EXISTING,
+                win32con.FILE_ATTRIBUTE_NORMAL,
+                None
+            )
+            size = win32file.GetFileSize(h)
+            hr, data = win32file.ReadFile(h, size)
+            win32file.CloseHandle(h)
+            bio = io.BytesIO(data)
+            return openpyxl.load_workbook(bio, data_only=data_only)
+        except Exception as e:
+            raise PermissionError(f"Gagal membaca '{p.name}' karena sedang dikunci oleh aplikasi lain: {e}")
+
+
 def load_reference_patients(ref_path=BASE_DIR / "data_rujukan_pasien.xlsx"):
     """Membaca database rujukan pasien lokal."""
     ref_by_no = {}
@@ -1191,7 +1226,7 @@ def create_patient_folders_from_excel(rekap_excel_path, pkm_out_dir, nama_pkm):
        Kelompokkan folder pasien di dalam subfolder nama Puskesmas masing-masing:
        Format: "FOLDER_PASIEN/[NAMA_PUSKESMAS]/[KD_PORSI]_[NAMA]/"
     """
-    wb = openpyxl.load_workbook(rekap_excel_path, data_only=True)
+    wb = load_workbook_safe(rekap_excel_path, data_only=True)
     ws_darah = wb["DARAH"] if "DARAH" in wb.sheetnames else None
     ws_urin = wb["URIN"] if "URIN" in wb.sheetnames else None
 
@@ -1421,12 +1456,13 @@ def mode_extract(config, ref_by_no=None, ref_by_name=None, target_pkm=None):
 # ---------------------------------------------------------------------------
 # TAHAP 2: Mode Cetak (Validasi Kelengkapan & Cetak Word + PDF)
 # ---------------------------------------------------------------------------
-def mode_generate(config, word_app=None, target_pkm=None):
+def mode_generate(config, word_app=None, target_pkm=None, force=False):
     """
     MODE CETAK:
     1. Membaca data yang SUDAH direview dari 'Template Exel.xlsx' (atau Rekap per Puskesmas).
-    2. Periksa kolom parameter lab: Jika masih ada kolom wajib yang kosong, LEWATI (skip).
-    3. Untuk pasien yang SELURUH parameter labnya lengkap: buat dokumen Word & PDF All-in-One.
+    2. Melewati (skip) Puskesmas yang dokumen Word & PDF-nya sudah lengkap dicetak sebelumnya (kecuali pakai --force).
+    3. Periksa kolom parameter lab: Jika masih ada kolom wajib yang kosong, LEWATI (skip) pasien tersebut.
+    4. Untuk pasien yang SELURUH parameter labnya lengkap: buat dokumen Word & PDF All-in-One.
     """
     print("\n" + "=" * 60, flush=True)
     print("   MODE CETAK: VALIDASI EXCEL & CETAK ALL-IN-ONE WORD + PDF", flush=True)
@@ -1454,22 +1490,41 @@ def mode_generate(config, word_app=None, target_pkm=None):
             print(f" [WARN] File '{rekap_file.name}' tidak ditemukan di '{nama_pkm}'. Dilewati.", flush=True)
             continue
 
+        # File output All-in-One
+        out_darah_docx = pkm_out_dir / f"All_Hasil_Darah_{nama_pkm}.docx"
+        out_darah_pdf = pkm_out_dir / f"All_Hasil_Darah_{nama_pkm}.pdf"
+        out_urin_docx = pkm_out_dir / f"All_Hasil_Urin_{nama_pkm}.docx"
+        out_urin_pdf = pkm_out_dir / f"All_Hasil_Urin_{nama_pkm}.pdf"
+
+        darah_done = out_darah_docx.exists() and out_darah_pdf.exists()
+        urin_done = out_urin_docx.exists() and out_urin_pdf.exists()
+
+        if darah_done and urin_done and not force:
+            print("\n" + "=" * 55, flush=True)
+            print(f" >>> {nama_pkm}: SUDAH DICETAK (DILEWATI) <<<", flush=True)
+            print(f" [SKIP] Seluruh dokumen Word & PDF untuk {nama_pkm} sudah lengkap ada.", flush=True)
+            print("        (Gunakan opsi '--force' jika ingin mencetak ulang Puskesmas ini)", flush=True)
+            print("=" * 55, flush=True)
+            continue
+
         print("\n" + "=" * 55, flush=True)
         print(f" >>> MEMPROSES CETAK: {nama_pkm} <<<", flush=True)
         print("=" * 55, flush=True)
 
-        # Standardisasi styling dan format nilai Excel sebelum pembacaan & pencetakan
+        # Standardisasi styling dan format nilai Excel sebelum pembacaan & pencetakan (jika file bisa diedit)
         try:
             wb_style = openpyxl.load_workbook(rekap_file)
             apply_excel_styling(wb_style)
             wb_style.save(rekap_file)
+        except PermissionError:
+            print(f" [INFO] File '{rekap_file.name}' sedang dibuka di Microsoft Excel. Membaca data langsung tanpa menutup Excel...", flush=True)
         except Exception:
             pass
 
         try:
-            wb = openpyxl.load_workbook(rekap_file, data_only=True)
-        except PermissionError:
-            print(f" [ERROR] Tidak dapat membuka '{rekap_file.name}' karena sedang dibuka di Microsoft Excel. Mohon tutup file tersebut terlebih dahulu.", flush=True)
+            wb = load_workbook_safe(rekap_file, data_only=True)
+        except Exception as e:
+            print(f" [ERROR] Tidak dapat membuka '{rekap_file.name}': {e}. Dilewati.", flush=True)
             continue
 
         ws_darah = wb["DARAH"] if "DARAH" in wb.sheetnames else None
@@ -1477,60 +1532,64 @@ def mode_generate(config, word_app=None, target_pkm=None):
 
         darah_list = read_patients_from_sheet(ws_darah, jenis="DARAH") if ws_darah else []
         urin_list = read_patients_from_sheet(ws_urin, jenis="URIN") if ws_urin else []
+
+        # 1. Validasi & Cetak DARAH
         if darah_list:
-            print(f"\n [VALIDASI DARAH] Memeriksa kelengkapan parameter lab ({len(darah_list)} pasien)...", flush=True)
-            valid_darah = []
-            for p in darah_list:
-                nama_p = p.get("NAMA", "NONAME")
-                is_ok, missing = validate_darah_patient(p)
-                if is_ok:
-                    valid_darah.append(p)
-                else:
-                    print(f"Skip cetak {nama_p}: Parameter lab belum lengkap", flush=True)
-
-            if valid_darah:
-                t0 = time.time()
-                template_darah = BASE_DIR / "NEW TEMPLATE SAT DARAH.docx"
-                out_docx = pkm_out_dir / f"All_Hasil_Darah_{nama_pkm}.docx"
-                out_pdf = pkm_out_dir / f"All_Hasil_Darah_{nama_pkm}.pdf"
-
-                darah_dicts = [prepare_darah_dict(p, config, nama_pkm) for p in valid_darah]
-                with MailMerge(template_darah) as mm:
-                    mm.merge_templates(darah_dicts, separator="page_break")
-                    mm.write(str(out_docx))
-
-                convert_single_docx_to_pdf_fast(word_app, out_docx, out_pdf)
-                print(f" [PDF] Selesai: All_Hasil_Darah_{nama_pkm}.pdf ({len(valid_darah)} pasien valid) - {time.time() - t0:.1f} detik", flush=True)
+            if darah_done and not force:
+                print(f"\n [SKIP DARAH] 'All_Hasil_Darah_{nama_pkm}.pdf' sudah ada. Melewati cetak Darah...", flush=True)
             else:
-                print(f" [INFO] Tidak ada pasien DARAH dengan parameter lab lengkap untuk {nama_pkm}.", flush=True)
+                print(f"\n [VALIDASI DARAH] Memeriksa kelengkapan parameter lab ({len(darah_list)} pasien)...", flush=True)
+                valid_darah = []
+                for p in darah_list:
+                    nama_p = p.get("NAMA", "NONAME")
+                    is_ok, missing = validate_darah_patient(p)
+                    if is_ok:
+                        valid_darah.append(p)
+                    else:
+                        print(f"Skip cetak {nama_p}: Parameter lab belum lengkap", flush=True)
 
-        # 2. Validasi & Cetak URIN (urin_list sudah dimuat dari ws_urin)
+                if valid_darah:
+                    t0 = time.time()
+                    template_darah = BASE_DIR / "NEW TEMPLATE SAT DARAH.docx"
+
+                    darah_dicts = [prepare_darah_dict(p, config, nama_pkm) for p in valid_darah]
+                    with MailMerge(template_darah) as mm:
+                        mm.merge_templates(darah_dicts, separator="page_break")
+                        mm.write(str(out_darah_docx))
+
+                    convert_single_docx_to_pdf_fast(word_app, out_darah_docx, out_darah_pdf)
+                    print(f" [PDF] Selesai: All_Hasil_Darah_{nama_pkm}.pdf ({len(valid_darah)} pasien valid) - {time.time() - t0:.1f} detik", flush=True)
+                else:
+                    print(f" [INFO] Tidak ada pasien DARAH dengan parameter lab lengkap untuk {nama_pkm}.", flush=True)
+
+        # 2. Validasi & Cetak URIN
         if urin_list:
-            print(f"\n [VALIDASI URIN] Memeriksa kelengkapan parameter lab ({len(urin_list)} pasien)...", flush=True)
-            valid_urin = []
-            for p in urin_list:
-                nama_p = p.get("NAMA", "NONAME")
-                is_ok, missing = validate_urin_patient(p)
-                if is_ok:
-                    valid_urin.append(p)
-                else:
-                    print(f"Skip cetak {nama_p}: Parameter lab belum lengkap", flush=True)
-
-            if valid_urin:
-                t0 = time.time()
-                template_urin = BASE_DIR / "NEW TEMPLATE SAT URIN.docx"
-                out_docx = pkm_out_dir / f"All_Hasil_Urin_{nama_pkm}.docx"
-                out_pdf = pkm_out_dir / f"All_Hasil_Urin_{nama_pkm}.pdf"
-
-                urin_dicts = [prepare_urin_dict(p, config, nama_pkm) for p in valid_urin]
-                with MailMerge(template_urin) as mm:
-                    mm.merge_templates(urin_dicts, separator="page_break")
-                    mm.write(str(out_docx))
-
-                convert_single_docx_to_pdf_fast(word_app, out_docx, out_pdf)
-                print(f" [PDF] Selesai: All_Hasil_Urin_{nama_pkm}.pdf ({len(valid_urin)} pasien valid) - {time.time() - t0:.1f} detik", flush=True)
+            if urin_done and not force:
+                print(f"\n [SKIP URIN] 'All_Hasil_Urin_{nama_pkm}.pdf' sudah ada. Melewati cetak Urin...", flush=True)
             else:
-                print(f" [INFO] Tidak ada pasien URIN dengan parameter lab lengkap untuk {nama_pkm}.", flush=True)
+                print(f"\n [VALIDASI URIN] Memeriksa kelengkapan parameter lab ({len(urin_list)} pasien)...", flush=True)
+                valid_urin = []
+                for p in urin_list:
+                    nama_p = p.get("NAMA", "NONAME")
+                    is_ok, missing = validate_urin_patient(p)
+                    if is_ok:
+                        valid_urin.append(p)
+                    else:
+                        print(f"Skip cetak {nama_p}: Parameter lab belum lengkap", flush=True)
+
+                if valid_urin:
+                    t0 = time.time()
+                    template_urin = BASE_DIR / "NEW TEMPLATE SAT URIN.docx"
+
+                    urin_dicts = [prepare_urin_dict(p, config, nama_pkm) for p in valid_urin]
+                    with MailMerge(template_urin) as mm:
+                        mm.merge_templates(urin_dicts, separator="page_break")
+                        mm.write(str(out_urin_docx))
+
+                    convert_single_docx_to_pdf_fast(word_app, out_urin_docx, out_urin_pdf)
+                    print(f" [PDF] Selesai: All_Hasil_Urin_{nama_pkm}.pdf ({len(valid_urin)} pasien valid) - {time.time() - t0:.1f} detik", flush=True)
+                else:
+                    print(f" [INFO] Tidak ada pasien URIN dengan parameter lab lengkap untuk {nama_pkm}.", flush=True)
 
     print("\n" + "=" * 60, flush=True)
     print("   SELURUH PROSES CETAK DOKUMEN SELESAI!", flush=True)
@@ -1544,6 +1603,7 @@ def main():
     parser = argparse.ArgumentParser(description="Sistem Otomasi Hasil Laboratorium Klinis")
     parser.add_argument("--extract", action="store_true", help="Mode Ekstraksi: Ekstrak foto ke Excel & buat FOLDER_PASIEN (tanpa cetak)")
     parser.add_argument("--generate", action="store_true", help="Mode Cetak: Validasi kelengkapan data Excel & cetak All-in-One Word + PDF")
+    parser.add_argument("--force", action="store_true", help="Paksa cetak ulang seluruh dokumen meskipun file hasil cetak sudah ada")
     args = parser.parse_args()
 
     config = load_config()
@@ -1574,17 +1634,22 @@ def main():
         if args.extract:
             mode_extract(config, ref_by_no, ref_by_name)
         elif args.generate:
-            mode_generate(config, word_app=word_app)
+            mode_generate(config, word_app=word_app, force=args.force)
         else:
-            # Jika dijalankan tanpa argumen
+            # Jika dijalankan tanpa argumen: Cek apakah ada file foto nyata di 'foto_masuk/'
             input_base_dir = BASE_DIR / "foto_masuk"
-            pkm_subfolders = [d for d in input_base_dir.iterdir() if d.is_dir()] if input_base_dir.exists() else []
-            if pkm_subfolders:
-                print("\n [INFO] Menjalankan default: MODE EKSTRAKSI (--extract)...", flush=True)
+            img_exts = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff"}
+            has_photos = any(
+                f.is_file() and f.suffix.lower() in img_exts
+                for f in input_base_dir.rglob("*")
+            ) if input_base_dir.exists() else False
+
+            if has_photos:
+                print("\n [INFO] Ditemukan file foto di 'foto_masuk/'. Menjalankan: MODE EKSTRAKSI (--extract)...", flush=True)
                 mode_extract(config, ref_by_no, ref_by_name)
             else:
-                print("\n [INFO] 'foto_masuk/' kosong. Menjalankan default: MODE CETAK (--generate)...", flush=True)
-                mode_generate(config, word_app=word_app)
+                print("\n [INFO] 'foto_masuk/' tidak berisi file foto baru. Menjalankan: MODE CETAK (--generate)...", flush=True)
+                mode_generate(config, word_app=word_app, force=args.force)
     finally:
         if word_app:
             try:
