@@ -3,6 +3,7 @@ import sys
 import re
 import json
 import time
+import random
 import shutil
 import io
 import argparse
@@ -243,37 +244,50 @@ def analyze_image(img_path):
     image_part = types.Part.from_bytes(data=jpeg_bytes, mime_type="image/jpeg")
 
     models_to_try = [
+        ("gemini-2.5-flash", None),
+        ("gemini-3.5-flash", None),
         ("gemini-3.8-flash", None),
         ("gemini-3.5-flash-lite", None),
-        ("gemini-2.5-flash", None),
+        ("gemini-3.1-flash-lite", None),
     ]
     last_err = None
-    for model_name, tb in models_to_try:
-        cfg = types.GenerateContentConfig(
-            response_mime_type="application/json",
-            thinking_config=types.ThinkingConfig(thinking_budget=tb) if tb is not None else None
-        )
-        for attempt in range(2):
-            try:
-                response = client.models.generate_content(
-                    model=model_name,
-                    contents=[image_part, VISION_PROMPT],
-                    config=cfg
-                )
-                raw_text = response.text.strip()
-                if raw_text.startswith("```"):
-                    raw_text = re.sub(r"^```[a-zA-Z]*\n?", "", raw_text)
-                    raw_text = re.sub(r"\n?```$", "", raw_text)
-                return json.loads(raw_text)
-            except Exception as e:
-                last_err = e
-                err_str = str(e)
-                if attempt == 0 and ("503" in err_str or "UNAVAILABLE" in err_str):
-                    time.sleep(2)
-                    continue
-                print(f" [WARN] Model {model_name} dialihkan ({type(e).__name__}). Mencoba model berikutnya...", flush=True)
-                time.sleep(1)
-                break
+
+    # Lakukan hingga 2 putaran model jika seluruh server Google sedang mengalami lonjakan trafik (503 spike)
+    for cycle in range(2):
+        for model_name, tb in models_to_try:
+            cfg = types.GenerateContentConfig(
+                response_mime_type="application/json",
+                thinking_config=types.ThinkingConfig(thinking_budget=tb) if tb is not None else None
+            )
+            max_attempts = 3
+            for attempt in range(max_attempts):
+                try:
+                    response = client.models.generate_content(
+                        model=model_name,
+                        contents=[image_part, VISION_PROMPT],
+                        config=cfg
+                    )
+                    raw_text = response.text.strip()
+                    if raw_text.startswith("```"):
+                        raw_text = re.sub(r"^```[a-zA-Z]*\n?", "", raw_text)
+                        raw_text = re.sub(r"\n?```$", "", raw_text)
+                    return json.loads(raw_text)
+                except Exception as e:
+                    last_err = e
+                    err_str = str(e)
+                    is_transient = any(code in err_str for code in ["503", "UNAVAILABLE", "429", "RESOURCE_EXHAUSTED"])
+                    if is_transient and attempt < max_attempts - 1:
+                        backoff = (attempt + 1) * 3 + random.uniform(1.0, 2.5)
+                        print(f" [INFO] Server Google Gemini sedang antre/padat ({type(e).__name__}). Menunggu {backoff:.0f} detik lalu mencoba lagi ({attempt + 1}/{max_attempts})...", flush=True)
+                        time.sleep(backoff)
+                        continue
+                    print(f" [WARN] Model {model_name} dialihkan ({type(e).__name__}). Mencoba model berikutnya...", flush=True)
+                    time.sleep(1)
+                    break
+
+        if cycle == 0:
+            print(" [INFO] Seluruh model sedang mengalami antrean trafik serentak di Google. Menunggu 8 detik sebelum putaran kedua...", flush=True)
+            time.sleep(8)
 
     raise last_err
 
