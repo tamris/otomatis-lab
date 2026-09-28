@@ -258,6 +258,13 @@ def parse_val(val):
     s = str(val).strip()
     if s == "":
         return None
+    # Jika format desimal eksplisit seperti '7.0' atau '1.010', pertahankan sebagai teks agar presisi tidak hilang di Excel
+    if re.match(r'^\d+\.0+$', s) or re.match(r'^1\.\d{3}$', s) or re.match(r'^10\d{2}$', s):
+        if re.match(r'^10\d{2}$', s):
+            f = float(s)
+            if 1000 <= f <= 1100:
+                return f"{f / 1000.0:.3f}"
+        return s
     s_num = s.replace(",", ".")
     try:
         if "." in s_num:
@@ -502,6 +509,89 @@ def sort_sheet_rows_by_no(ws):
         ws.delete_rows(len(rows_data) + 2, ws.max_row - (len(rows_data) + 1))
 
 
+def format_cell_value(val, fmt="", field_name=""):
+    """
+    Memformat nilai cell agar sesuai dengan tampilan presisi di Excel & standar lab medis:
+    - BERAT JENIS: selalu berformat '1.xxx' 3 angka desimal (misal 1010 -> '1.010', 1015 -> '1.015', '1.01' -> '1.010').
+    - PH, Hemoglobin, Lekosit, Creatinine, HbA1c, Hematokrit, MCV, MCH, MCHC:
+      Selalu mempertahankan 1 angka desimal (misal 7 atau 7.0 -> '7.0', 4 -> '4.0', 1 -> '1.0').
+    - Eritrosit:
+      Selalu mempertahankan 2 angka desimal (misal 4 -> '4.00', 4.5 -> '4.50', 4.19 -> '4.19').
+    - KD_PORSI, NO, UMUR:
+      Membersihkan akhiran '.0' jika ada (misal '1100622882.0' -> '1100622882').
+    """
+    if val is None:
+        return ""
+    s = str(val).strip()
+    if s == "" or s.lower() == "none":
+        return ""
+
+    field_upper = str(field_name).upper().replace("_", " ")
+
+    # 1. Khusus BERAT JENIS: selalu format 1.xxx (3 desimal)
+    if "BERAT JENIS" in field_upper or field_upper == "BJ":
+        s_clean = s.replace(",", ".")
+        try:
+            f = float(s_clean)
+            if 1000 <= f <= 1100:
+                return f"{f / 1000.0:.3f}"
+            if 1.0 <= f <= 1.1:
+                return f"{f:.3f}"
+        except ValueError:
+            pass
+        return s
+
+    # 2. Khusus KD_PORSI / NO / UMUR: bersihkan akhiran .0
+    if any(k in field_upper for k in ["KD PORSI", "KDPORSI", "NO", "UMUR"]):
+        if s.endswith(".0"):
+            s = s[:-2]
+        return s
+
+    # 3. Parameter dengan 2 angka desimal (Eritrosit)
+    if "ERITROSIT" in field_upper and ("DARAH" in field_upper or field_name == "Eritrosit"):
+        s_clean = s.replace(",", ".")
+        try:
+            f = float(s_clean)
+            return f"{f:.2f}"
+        except ValueError:
+            return s
+
+    # 4. Parameter dengan 1 angka desimal (PH, Hemoglobin, Lekosit, Creatinine, HbA1c, Hematokrit, MCV, MCH, MCHC)
+    decimal_1_fields = [
+        "PH", "HEMOGLOBIN", "HB", "LEKOSIT", "CREATININE", "CR",
+        "HBA1C", "HEMATOKRIT", "MCV", "MCH", "MCHC"
+    ]
+    is_decimal_1 = any(k == field_upper or field_upper.startswith(k) for k in decimal_1_fields)
+    has_dec_1_fmt = bool(fmt and (".0" in fmt and ".00" not in fmt))
+
+    if is_decimal_1 or has_dec_1_fmt:
+        s_clean = s.replace(",", ".")
+        try:
+            f = float(s_clean)
+            return f"{f:.1f}"
+        except ValueError:
+            return s
+
+    # 5. Format sesuai format Excel jika cell.number_format memuat .00 atau .0
+    if fmt:
+        if ".00" in fmt:
+            s_clean = s.replace(",", ".")
+            try:
+                f = float(s_clean)
+                return f"{f:.2f}"
+            except ValueError:
+                pass
+        elif ".0" in fmt:
+            s_clean = s.replace(",", ".")
+            try:
+                f = float(s_clean)
+                return f"{f:.1f}"
+            except ValueError:
+                pass
+
+    return s
+
+
 def apply_excel_styling(wb):
     """
     Format otomatis tampilan Excel:
@@ -509,6 +599,7 @@ def apply_excel_styling(wb):
     2. Memberi border tipis (All Borders) ke seluruh tabel data & header.
     3. Memberi highlight warna kuning lembut (soft yellow) jika pasien belum memiliki hasil lab.
        Jika hasil lab sudah terisi, warna kuning otomatis dibersihkan.
+    4. Menstandarkan kolom BERAT JENIS di sheet URIN menjadi teks '1.xxx'.
     """
     for s_name in ["DARAH", "URIN"]:
         if s_name not in wb.sheetnames:
@@ -546,6 +637,52 @@ def apply_excel_styling(wb):
                         "00FFF2CC", "FFF2CC", "00FFFF99", "FFFF99", "00FFFF00", "FFFF00"
                     ]:
                         cell.fill = NO_FILL
+
+        # 4. Standardisasi format kolom desimal di Excel (BJ '1.xxx', PH 'x.x', HBA1C 'x.x', Eritrosit 'x.xx', dll)
+        if s_name == "URIN":
+            for c in range(1, ws.max_column + 1):
+                h = ws.cell(1, c).value
+                if not h:
+                    continue
+                h_clean = clean_col_name(h)
+                if "berat" in h_clean:
+                    for r in range(2, ws.max_row + 1):
+                        cell = ws.cell(r, c)
+                        if cell.value is not None:
+                            formatted_bj = format_cell_value(cell.value, field_name="BERAT_JENIS")
+                            if formatted_bj:
+                                cell.value = formatted_bj
+                                cell.number_format = '@'
+                elif h_clean == "ph":
+                    for r in range(2, ws.max_row + 1):
+                        cell = ws.cell(r, c)
+                        if cell.value is not None:
+                            formatted_ph = format_cell_value(cell.value, field_name="PH")
+                            if formatted_ph:
+                                cell.value = formatted_ph
+                                cell.number_format = '@'
+        elif s_name == "DARAH":
+            for c in range(1, ws.max_column + 1):
+                h = ws.cell(1, c).value
+                if not h:
+                    continue
+                h_clean = clean_col_name(h)
+                if any(k in h_clean for k in ["hemoglobin", "lekosit", "hematokrit", "mcv", "mch", "mchc", "creatinine", "hba1c"]):
+                    for r in range(2, ws.max_row + 1):
+                        cell = ws.cell(r, c)
+                        if cell.value is not None:
+                            formatted = format_cell_value(cell.value, cell.number_format, field_name=h_clean)
+                            if formatted:
+                                cell.value = formatted
+                                cell.number_format = '@'
+                elif "eritrosit" in h_clean:
+                    for r in range(2, ws.max_row + 1):
+                        cell = ws.cell(r, c)
+                        if cell.value is not None:
+                            formatted = format_cell_value(cell.value, cell.number_format, field_name="ERITROSIT")
+                            if formatted:
+                                cell.value = formatted
+                                cell.number_format = '@'
 
 
 def init_rekap_excel(rekap_path, template_source, nama_pkm, config, ref_by_no=None):
@@ -857,21 +994,30 @@ def read_patients_from_sheet(ws, jenis="DARAH"):
 
     patients = []
     for r in range(2, ws.max_row + 1):
-        nama = ws.cell(r, nama_col).value if nama_col else None
-        kd_porsi = ws.cell(r, kd_col).value if kd_col else None
-        no = ws.cell(r, no_col).value if no_col else None
+        cell_nama = ws.cell(r, nama_col) if nama_col else None
+        cell_kd = ws.cell(r, kd_col) if kd_col else None
+        cell_no = ws.cell(r, no_col) if no_col else None
+        cell_umur = ws.cell(r, umur_col) if umur_col else None
+        cell_exam = ws.cell(r, tgl_exam_col) if tgl_exam_col else None
+        cell_pkm = ws.cell(r, pkm_col) if pkm_col else None
+        cell_surat = ws.cell(r, tgl_surat_col) if tgl_surat_col else None
+
+        nama = cell_nama.value if cell_nama else None
+        kd_porsi = format_cell_value(cell_kd.value, cell_kd.number_format, "KD_PORSI") if cell_kd else ""
+        no = format_cell_value(cell_no.value, cell_no.number_format, "NO") if cell_no else ""
+        umur = format_cell_value(cell_umur.value, cell_umur.number_format, "UMUR") if cell_umur else ""
 
         if not nama and not kd_porsi:
             continue
 
         p_data = {
-            "NO": int(no) if isinstance(no, (int, float)) else str(no or "").strip(),
+            "NO": no,
             "NAMA": str(nama or "").strip(),
             "KD_PORSI": str(kd_porsi or "").strip(),
-            "UMUR": ws.cell(r, umur_col).value if umur_col else "",
-            "TANGGAL_EXAM": ws.cell(r, tgl_exam_col).value if tgl_exam_col else "",
-            "PUSKESMAS": ws.cell(r, pkm_col).value if pkm_col else "",
-            "TANGGAL_SURAT": ws.cell(r, tgl_surat_col).value if tgl_surat_col else "",
+            "UMUR": umur,
+            "TANGGAL_EXAM": str(cell_exam.value or "").strip() if cell_exam else "",
+            "PUSKESMAS": str(cell_pkm.value or "").strip() if cell_pkm else "",
+            "TANGGAL_SURAT": str(cell_surat.value or "").strip() if cell_surat else "",
         }
 
         if jenis == "DARAH":
@@ -904,7 +1050,8 @@ def read_patients_from_sheet(ws, jenis="DARAH"):
             ]
             for dict_k, col_k in lab_keys:
                 c_idx = col_map.get(col_k)
-                p_data[dict_k] = ws.cell(r, c_idx).value if c_idx else None
+                cell = ws.cell(r, c_idx) if c_idx else None
+                p_data[dict_k] = format_cell_value(cell.value, cell.number_format, dict_k) if cell and cell.value is not None else None
         else:
             lab_keys = [
                 ("WARNA", "warna"),
@@ -935,7 +1082,8 @@ def read_patients_from_sheet(ws, jenis="DARAH"):
                     c_idx = 13
                 else:
                     c_idx = col_map.get(col_k)
-                p_data[dict_k] = ws.cell(r, c_idx).value if c_idx else None
+                cell = ws.cell(r, c_idx) if c_idx else None
+                p_data[dict_k] = format_cell_value(cell.value, cell.number_format, dict_k) if cell and cell.value is not None else None
 
         patients.append(p_data)
 
@@ -951,21 +1099,21 @@ def sanitize_filename(name):
 
 def prepare_darah_dict(p, config, nama_pkm):
     return {
-        "No": str(p.get("NO", "") or ""),
+        "No": format_cell_value(p.get("NO", ""), field_name="NO"),
         "NAMA": str(p.get("NAMA", "") or ""),
-        "UMUR": str(p.get("UMUR", "") or ""),
-        "KD_PORSI": str(p.get("KD_PORSI", "") or ""),
+        "UMUR": format_cell_value(p.get("UMUR", ""), field_name="UMUR"),
+        "KD_PORSI": format_cell_value(p.get("KD_PORSI", ""), field_name="KD_PORSI"),
         "PUSKESMAS": str(p.get("PUSKESMAS") or nama_pkm or ""),
         "TANGGAL_EXAM": str(p.get("TANGGAL_EXAM") or config.get("TANGGAL_EXAM", "")),
         "TANGGAL_SURAT": str(p.get("TANGGAL_SURAT") or config.get("TANGGAL_SURAT", "")),
-        "Hemoglobin": str(p.get("Hemoglobin", "") or ""),
-        "Lekosit": str(p.get("Lekosit", "") or ""),
-        "Eritrosit": str(p.get("Eritrosit", "") or ""),
-        "Trombosit": str(p.get("Trombosit", "") or ""),
-        "Hematokrit": str(p.get("Hematokrit", "") or ""),
-        "MCV": str(p.get("MCV", "") or ""),
-        "MCH": str(p.get("MCH", "") or ""),
-        "MCHC": str(p.get("MCHC", "") or ""),
+        "Hemoglobin": format_cell_value(p.get("Hemoglobin", ""), field_name="Hemoglobin"),
+        "Lekosit": format_cell_value(p.get("Lekosit", ""), field_name="Lekosit"),
+        "Eritrosit": format_cell_value(p.get("Eritrosit", ""), field_name="Eritrosit"),
+        "Trombosit": format_cell_value(p.get("Trombosit", ""), field_name="Trombosit"),
+        "Hematokrit": format_cell_value(p.get("Hematokrit", ""), field_name="Hematokrit"),
+        "MCV": format_cell_value(p.get("MCV", ""), field_name="MCV"),
+        "MCH": format_cell_value(p.get("MCH", ""), field_name="MCH"),
+        "MCHC": format_cell_value(p.get("MCHC", ""), field_name="MCHC"),
         "LED": str(p.get("LED", "") or ""),
         "Eosinofil": str(p.get("Eosinofil", "") or ""),
         "Basofil": str(p.get("Basofil", "") or ""),
@@ -981,24 +1129,24 @@ def prepare_darah_dict(p, config, nama_pkm):
         "SGOT": str(p.get("OT") or p.get("SGOT") or ""),
         "SGPT": str(p.get("PT") or p.get("SGPT") or ""),
         "UREUM": str(p.get("UR") or p.get("UREUM") or ""),
-        "CREATININE": str(p.get("CR") or p.get("CREATININE") or ""),
-        "HBA1C": str(p.get("HBA1C", "") or ""),
+        "CREATININE": format_cell_value(p.get("CR") or p.get("CREATININE") or "", field_name="CREATININE"),
+        "HBA1C": format_cell_value(p.get("HBA1C", ""), field_name="HBA1C"),
     }
 
 
 def prepare_urin_dict(p, config, nama_pkm):
     return {
         "NAMA": str(p.get("NAMA", "") or ""),
-        "umur": str(p.get("UMUR", "") or ""),
-        "KD_PORSI": str(p.get("KD_PORSI", "") or ""),
+        "umur": format_cell_value(p.get("UMUR", ""), field_name="UMUR"),
+        "KD_PORSI": format_cell_value(p.get("KD_PORSI", ""), field_name="KD_PORSI"),
         "PUSKESMAS": str(p.get("PUSKESMAS") or nama_pkm or ""),
         "TANGGAL_EXAM": str(p.get("TANGGAL_EXAM") or config.get("TANGGAL_EXAM", "")),
         "TANGGAL_SURAT": str(p.get("TANGGAL_SURAT") or config.get("TANGGAL_SURAT", "")),
         "WARNA": str(p.get("WARNA", "") or ""),
         "KEJERNIHAN": str(p.get("KEJERNIHAN", "") or ""),
         "DARAH": str(p.get("DARAH", "") or ""),
-        "BERAT_JENIS": str(p.get("BERAT JENIS") or p.get("BERAT_JENIS") or ""),
-        "PH": str(p.get("PH", "") or ""),
+        "BERAT_JENIS": format_cell_value(p.get("BERAT JENIS") or p.get("BERAT_JENIS") or "", field_name="BERAT_JENIS"),
+        "PH": format_cell_value(p.get("PH", "") or "", field_name="PH"),
         "LEKOSIT": str(p.get("LEKOSIT_KIMIA") or p.get("LEKOSIT") or ""),
         "NITRIT": str(p.get("NITRIT", "") or ""),
         "GLUKOSA": str(p.get("GLUKOSA", "") or ""),
@@ -1309,6 +1457,14 @@ def mode_generate(config, word_app=None, target_pkm=None):
         print("\n" + "=" * 55, flush=True)
         print(f" >>> MEMPROSES CETAK: {nama_pkm} <<<", flush=True)
         print("=" * 55, flush=True)
+
+        # Standardisasi styling dan format nilai Excel sebelum pembacaan & pencetakan
+        try:
+            wb_style = openpyxl.load_workbook(rekap_file)
+            apply_excel_styling(wb_style)
+            wb_style.save(rekap_file)
+        except Exception:
+            pass
 
         try:
             wb = openpyxl.load_workbook(rekap_file, data_only=True)
