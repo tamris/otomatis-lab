@@ -8,7 +8,7 @@ echo ============================================================
 echo    MEMULAI PROSES GENERATE WORD ^& PDF ALL-IN-ONE
 echo ============================================================
 echo.
-python otomasi_lab.py --generate
+python otomasi_lab.py --generate %*
 echo.
 echo ============================================================
 echo    PROSES SELESAI!
