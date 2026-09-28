@@ -582,6 +582,10 @@ def format_cell_value(val, fmt="", field_name=""):
             s = s[:-2]
         return s
 
+    # JANGAN ubah hitungan sedimen urin menjadi angka desimal (misal: "1", "1-2")
+    if field_upper in ["LEKOSIT_SEDIMEN", "LEKOSIT1", "EPITEL"]:
+        return s
+
     # 3. Parameter dengan 2 angka desimal (Eritrosit)
     if "ERITROSIT" in field_upper and ("DARAH" in field_upper or field_name == "Eritrosit"):
         s_clean = s.replace(",", ".")
@@ -877,8 +881,30 @@ def update_rekap_excel(rekap_path, template_source, jenis, patients, config, nam
         if val:
             col_map[clean_col_name(val)] = col
 
-    urin_lekosit_kimia_col = 13
-    urin_lekosit_sedimen_col = 22
+    urin_lekosit_kimia_col = None
+    urin_lekosit_sedimen_col = None
+    if jenis == "URIN":
+        epitel_col = None
+        for c in range(1, ws.max_column + 1):
+            v = ws.cell(1, c).value
+            if v and clean_col_name(v) == "epitel":
+                epitel_col = c
+                break
+        if epitel_col is None:
+            epitel_col = 999
+
+        for c in range(1, ws.max_column + 1):
+            v = ws.cell(1, c).value
+            if v and clean_col_name(v) in ["lekosit", "leukosit"]:
+                if c < epitel_col and urin_lekosit_kimia_col is None:
+                    urin_lekosit_kimia_col = c
+                elif c > epitel_col and urin_lekosit_sedimen_col is None:
+                    urin_lekosit_sedimen_col = c
+
+        if urin_lekosit_kimia_col is None:
+            urin_lekosit_kimia_col = 13
+        if urin_lekosit_sedimen_col is None:
+            urin_lekosit_sedimen_col = 22
 
     for p in patients:
         target_row = find_matching_row(ws, col_map, p, nama_pkm)
@@ -1027,6 +1053,29 @@ def read_patients_from_sheet(ws, jenis="DARAH"):
     pkm_col = col_map.get("puskesmas")
     tgl_surat_col = col_map.get("tanggalsurat")
 
+    # Untuk URIN: pisahkan kolom KIMIA vs SEDIMEN secara dinamis berbasis posisi kolom EPITEL
+    epitel_col = None
+    kimia_cols = {}
+    sedimen_cols = {}
+    if jenis != "DARAH":
+        for c in range(1, ws.max_column + 1):
+            v = ws.cell(1, c).value
+            if v and clean_col_name(v) == "epitel":
+                epitel_col = c
+                break
+        if epitel_col is None:
+            epitel_col = 999
+
+        for c in range(1, ws.max_column + 1):
+            v = ws.cell(1, c).value
+            if not v:
+                continue
+            h = clean_col_name(v)
+            if c < epitel_col:
+                kimia_cols.setdefault(h, []).append(c)
+            else:
+                sedimen_cols.setdefault(h, []).append(c)
+
     patients = []
     for r in range(2, ws.max_row + 1):
         cell_nama = ws.cell(r, nama_col) if nama_col else None
@@ -1088,7 +1137,8 @@ def read_patients_from_sheet(ws, jenis="DARAH"):
                 cell = ws.cell(r, c_idx) if c_idx else None
                 p_data[dict_k] = format_cell_value(cell.value, cell.number_format, dict_k) if cell and cell.value is not None else None
         else:
-            lab_keys = [
+            # 1. Parameter KIMIA URIN
+            kimia_params = [
                 ("WARNA", "warna"),
                 ("KEJERNIHAN", "kejernihan"),
                 ("DARAH", "darah"),
@@ -1102,23 +1152,40 @@ def read_patients_from_sheet(ws, jenis="DARAH"):
                 ("BILIRUBIN", "bilirubin"),
                 ("BLOOD", "blood"),
                 ("KETON", "keton"),
+            ]
+            for dict_k, col_k in kimia_params:
+                val = None
+                for c_idx in kimia_cols.get(col_k, []):
+                    cell = ws.cell(r, c_idx)
+                    if cell and cell.value is not None and str(cell.value).strip() != "":
+                        val = format_cell_value(cell.value, cell.number_format, dict_k)
+                        break
+                p_data[dict_k] = val
+
+            # Alias LEKOSIT kimia
+            p_data["LEKOSIT"] = p_data.get("LEKOSIT_KIMIA")
+
+            # 2. Parameter SEDIMEN URIN
+            sedimen_params = [
                 ("EPITEL", "epitel"),
-                ("LEKOSIT_SEDIMEN", "lekosit_sedimen"),
+                ("LEKOSIT_SEDIMEN", "lekosit"),
                 ("ERITROSIT", "eritrosit"),
                 ("SILINDER", "silinder"),
                 ("KRISTAL", "kristal"),
                 ("BAKTERI", "bakteri"),
                 ("PP TEST", "pptest"),
             ]
-            for dict_k, col_k in lab_keys:
-                if dict_k == "LEKOSIT_SEDIMEN":
-                    c_idx = 22
-                elif dict_k == "LEKOSIT_KIMIA":
-                    c_idx = 13
-                else:
-                    c_idx = col_map.get(col_k)
-                cell = ws.cell(r, c_idx) if c_idx else None
-                p_data[dict_k] = format_cell_value(cell.value, cell.number_format, dict_k) if cell and cell.value is not None else None
+            for dict_k, col_k in sedimen_params:
+                val = None
+                for c_idx in sedimen_cols.get(col_k, []):
+                    cell = ws.cell(r, c_idx)
+                    if cell and cell.value is not None and str(cell.value).strip() != "":
+                        val = format_cell_value(cell.value, cell.number_format, dict_k)
+                        break
+                p_data[dict_k] = val
+
+            # Alias LEKOSIT sedimen untuk mailmerge template docx
+            p_data["LEKOSIT1"] = p_data.get("LEKOSIT_SEDIMEN")
 
         patients.append(p_data)
 
@@ -1375,7 +1442,7 @@ def mode_extract(config, ref_by_no=None, ref_by_name=None, target_pkm=None):
                 "Netrofil Seg", "Neutrofil_Seg", "Neutrofil Seg", "Limfosit", "Monosit",
                 "Glukosa puasa", "G2PP", "CHOLES", "TG", "OT", "PT", "UR", "CR", "HBA1C", "GOLDA"
             }
-            param_keys_urin = {"WARNA", "KEJERNIHAN", "DARAH", "BERAT JENIS", "PH", "LEKOSIT_KIMIA", "NITRIT", "GLUKOSA", "PROTEIN", "EPITEL"}
+            param_keys_urin = {"WARNA", "KEJERNIHAN", "DARAH", "BERAT JENIS", "PH", "LEKOSIT", "LEKOSIT_KIMIA", "LEKOSIT_SEDIMEN", "NITRIT", "GLUKOSA", "PROTEIN", "EPITEL"}
             check_keys = param_keys_darah if jenis == "DARAH" else param_keys_urin
 
             for p in extracted_patients:
