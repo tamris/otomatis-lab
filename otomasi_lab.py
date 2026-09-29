@@ -709,7 +709,7 @@ def format_cell_value(val, fmt="", field_name=""):
     return s
 
 
-def apply_excel_styling(wb):
+def apply_excel_styling(wb, config=None):
     """
     Format otomatis tampilan Excel:
     1. Mengurutkan seluruh baris data berdasarkan NO (1, 2, 3, ...) secara ascending.
@@ -717,13 +717,40 @@ def apply_excel_styling(wb):
     3. Memberi highlight warna kuning lembut (soft yellow) jika pasien belum memiliki hasil lab.
        Jika hasil lab sudah terisi, warna kuning otomatis dibersihkan.
     4. Menstandarkan kolom BERAT JENIS di sheet URIN menjadi teks '1.xxx'.
+    5. Menyelaraskan TANGGAL_EXAM dan TANGGAL_SURAT sesuai config.txt jika dikonfigurasi.
     """
+    if config is None:
+        config = load_config()
+    cfg_exam = config.get("TANGGAL_EXAM") if config else None
+    cfg_surat = config.get("TANGGAL_SURAT") if config else None
+
     for s_name in ["DARAH", "URIN"]:
         if s_name not in wb.sheetnames:
             continue
         ws = wb[s_name]
         if ws.max_row < 1:
             continue
+
+        # 0. Selaraskan TANGGAL_EXAM & TANGGAL_SURAT dari config.txt
+        if cfg_exam or cfg_surat:
+            tgl_exam_col = None
+            tgl_surat_col = None
+            for c in range(1, ws.max_column + 1):
+                v = ws.cell(1, c).value
+                if v:
+                    cv = clean_col_name(v)
+                    if cv == "tanggalexam":
+                        tgl_exam_col = c
+                    elif cv == "tanggalsurat":
+                        tgl_surat_col = c
+            for r in range(2, ws.max_row + 1):
+                no_val = ws.cell(r, 1).value
+                nama_val = ws.cell(r, 2).value
+                if no_val is not None or nama_val is not None:
+                    if cfg_exam and tgl_exam_col:
+                        ws.cell(r, tgl_exam_col).value = cfg_exam
+                    if cfg_surat and tgl_surat_col:
+                        ws.cell(r, tgl_surat_col).value = cfg_surat
 
         # 1. Otomatis urutkan baris berdasarkan NO (1, 2, 3, ...)
         sort_sheet_rows_by_no(ws)
@@ -1049,9 +1076,9 @@ def update_rekap_excel(rekap_path, template_source, jenis, patients, config, nam
             if p.get("NAMA"): safe_set(col_map.get("nama"), p.get("NAMA"))
             if p.get("UMUR"): safe_set(col_map.get("umur"), p.get("UMUR"))
             if p.get("KD_PORSI"): safe_set(col_map.get("kdporsi"), p.get("KD_PORSI"))
-            safe_set(col_map.get("tanggalexam"), p.get("TANGGAL_EXAM") or config.get("TANGGAL_EXAM"))
+            safe_set(col_map.get("tanggalexam"), config.get("TANGGAL_EXAM") or p.get("TANGGAL_EXAM"))
             safe_set(col_map.get("puskesmas"), nama_pkm)
-            safe_set(col_map.get("tanggalsurat"), p.get("TANGGAL_SURAT") or config.get("TANGGAL_SURAT"))
+            safe_set(col_map.get("tanggalsurat"), config.get("TANGGAL_SURAT") or p.get("TANGGAL_SURAT"))
         else:
             # SUDAH ADA: Perbarui kolom yang sebelumnya masih kosong
             if p.get("NO"): update_if_empty(col_map.get("no"), p.get("NO"))
@@ -1062,9 +1089,15 @@ def update_rekap_excel(rekap_path, template_source, jenis, patients, config, nam
                     safe_set(nama_c, p.get("NAMA"))
             if p.get("UMUR"): update_if_empty(col_map.get("umur"), p.get("UMUR"))
             if p.get("KD_PORSI"): update_if_empty(col_map.get("kdporsi"), p.get("KD_PORSI"))
-            update_if_empty(col_map.get("tanggalexam"), p.get("TANGGAL_EXAM") or config.get("TANGGAL_EXAM"))
+            if config.get("TANGGAL_EXAM"):
+                safe_set(col_map.get("tanggalexam"), config.get("TANGGAL_EXAM"))
+            else:
+                update_if_empty(col_map.get("tanggalexam"), p.get("TANGGAL_EXAM"))
             update_if_empty(col_map.get("puskesmas"), nama_pkm)
-            update_if_empty(col_map.get("tanggalsurat"), p.get("TANGGAL_SURAT") or config.get("TANGGAL_SURAT"))
+            if config.get("TANGGAL_SURAT"):
+                safe_set(col_map.get("tanggalsurat"), config.get("TANGGAL_SURAT"))
+            else:
+                update_if_empty(col_map.get("tanggalsurat"), p.get("TANGGAL_SURAT"))
 
         # Pengisian kolom parameter lab
         for p_key, p_val in p.items():
@@ -1091,7 +1124,7 @@ def update_rekap_excel(rekap_path, template_source, jenis, patients, config, nam
                     # Pasien SUDAH ADA: Perbarui kolom yang sebelumnya masih kosong
                     update_if_empty(target_col, p_val)
 
-    apply_excel_styling(wb)
+    apply_excel_styling(wb, config)
     # Coba simpan hingga 4 kali jika file sedang dibuka di Microsoft Excel
     for save_att in range(4):
         try:
@@ -1334,8 +1367,8 @@ def prepare_darah_dict(p, config, nama_pkm):
         "UMUR": format_cell_value(p.get("UMUR", ""), field_name="UMUR"),
         "KD_PORSI": format_cell_value(p.get("KD_PORSI", ""), field_name="KD_PORSI"),
         "PUSKESMAS": str(p.get("PUSKESMAS") or nama_pkm or ""),
-        "TANGGAL_EXAM": str(p.get("TANGGAL_EXAM") or config.get("TANGGAL_EXAM", "")),
-        "TANGGAL_SURAT": str(p.get("TANGGAL_SURAT") or config.get("TANGGAL_SURAT", "")),
+        "TANGGAL_EXAM": str((config.get("TANGGAL_EXAM") if config else None) or p.get("TANGGAL_EXAM", "")),
+        "TANGGAL_SURAT": str((config.get("TANGGAL_SURAT") if config else None) or p.get("TANGGAL_SURAT", "")),
         "Hemoglobin": format_cell_value(p.get("Hemoglobin", ""), field_name="Hemoglobin"),
         "Lekosit": format_cell_value(p.get("Lekosit", ""), field_name="Lekosit"),
         "Eritrosit": format_cell_value(p.get("Eritrosit", ""), field_name="Eritrosit"),
@@ -1370,8 +1403,8 @@ def prepare_urin_dict(p, config, nama_pkm):
         "umur": format_cell_value(p.get("UMUR", ""), field_name="UMUR"),
         "KD_PORSI": format_cell_value(p.get("KD_PORSI", ""), field_name="KD_PORSI"),
         "PUSKESMAS": str(p.get("PUSKESMAS") or nama_pkm or ""),
-        "TANGGAL_EXAM": str(p.get("TANGGAL_EXAM") or config.get("TANGGAL_EXAM", "")),
-        "TANGGAL_SURAT": str(p.get("TANGGAL_SURAT") or config.get("TANGGAL_SURAT", "")),
+        "TANGGAL_EXAM": str((config.get("TANGGAL_EXAM") if config else None) or p.get("TANGGAL_EXAM", "")),
+        "TANGGAL_SURAT": str((config.get("TANGGAL_SURAT") if config else None) or p.get("TANGGAL_SURAT", "")),
         "WARNA": str(p.get("WARNA", "") or ""),
         "KEJERNIHAN": str(p.get("KEJERNIHAN", "") or ""),
         "DARAH": str(p.get("DARAH", "") or ""),
