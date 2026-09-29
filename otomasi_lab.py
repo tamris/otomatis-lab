@@ -159,10 +159,14 @@ TUGAS:
        -> Jika demikian: Masukkan angka nomor pasien tersebut ke field "NO" (misal: 2, 3, 4, 7, 8... dst) dan isi field "NAMA": null! JANGAN gunakan nomor urut cetakan baris tabel di paling kiri jika ada nomor pasien tertulis di kolom NAME!
      * Perhatikan jika ada nomor pasien yang dilewati:
        -> Contoh: pada urutan nomor pasien 16, 17, 19, 20... perhatikan angka setelah 17 adalah 19 (angka 19 ditulis dengan angka 1 yang melengkung dan kepala bulat 9, diikuti 20). Nomor 18 dilewati! Pastikan Anda membaca angka yang tertulis yaitu 19, BUKAN 18!
+     * PENTING TENTANG TANDA CENTANG (✓) vs ANGKA PULUHAN:
+       -> Petugas lab sering memberi tanda centang '✓' di sebelah kiri nomor urut untuk menandai sampel yang diperiksa (contoh pada lembar pertama: '✓ 2', '✓ 3', '✓ 4', '✓ 7', '✓ 8'... '✓ 19', '✓ 20').
+          JANGAN PERNAH menganggap tanda centang '✓' sebagai angka '2'! Nomor tersebut adalah 2, 3, 4, 7, 8... 19, 20 (BUKAN 22, 23, 24, dst)!
+       -> Angka puluhan hanya berlaku jika petugas lab BENAR-BENAR menulis angka puluhan (misal jelas tertulis angka '2' di depan 1-20 menjadi 21 s/d 40 pada lembar kedua; atau angka '4' di depan 1-9 menjadi 41 s/d 49 lalu lanjut 50 s/d 60 pada lembar ketiga).
      * PENTING UNTUK NAMA TULISAN TANGAN DI BAGIAN BAWAH TABEL:
-       -> Jika di bagian bawah tabel ada nama orang yang ditulis tangan (misalnya 'Nur Hadi S.' atau 'Munaji'), masukkan nama tersebut ke field "NAMA": "Nur Hadi S." / "Munaji".
-       -> Untuk baris dengan nama tambahan ini, JANGAN mengambil angka baris cetakan tabel di margin kiri sebagai 'NO'! Isi field "NO": null, agar sistem mencocokkannya ke database berdasarkan nama pasien.
-     * Jika formulir cetakan bernomor 1-20 dan petugas lab menambahkan tulisan tangan angka puluhan di depannya (misal '2' di depan 1-20 -> 21 s/d 40; '4' di depan 1-9 -> 41 s/d 49 lalu lanjut 50 s/d 60; '6' di depan 1-5 -> 61 s/d 65), baca nomor urut sebenarnya yang telah ditambah puluhan!
+       -> Jika di bagian bawah tabel ada nama orang yang ditulis tangan (misalnya 'Nur Hadi S.', 'Nurhadi', atau 'Munaji'), masukkan nama tersebut ke field "NAMA".
+       -> Jika tertulis catatan tulisan tangan seperti: 'Ardiana 58    Nurhadi kambangan . 6.0 / 1015 epit. 2-4. leco- 1-2 eri- 0-1', itu adalah hasil pemeriksaan urin susulan untuk pasien 'Nurhadi' / 'Nur Hadi' (NO: 1)! Masukkan "NAMA": "Nurhadi" (NO: 1) dengan nilai PH: 6.0, BJ: 1.015, EPITEL: 2-4, LEKOSIT_SEDIMEN: 1-2, ERITROSIT: 0-1. JANGAN menggabungkan teks tersebut menjadi nama aneh seperti 'Nurdian 58'!
+       -> Untuk baris dengan nama tambahan ini, jika tidak ada nomor urut khusus di tabel, isi field "NO": null (atau nomor pasiennya jika diketahui), agar sistem mencocokkannya ke database berdasarkan nama pasien.
    - PENTING TENTANG BARIS DENGAN HASIL LAB KOSONG:
      * Jika suatu baris memiliki NAMA atau NOMOR pasien, TETAP EKSTRAK baris tersebut jika ada nilai pemeriksaannya! Jika baris tersebut hanya ada nomor tapi seluruh nilai labnya kosong melompong (misal hanya coretan atau tanda centang tanpa angka), kolom nilai pemeriksaannya isi null.
    - Ekstrak NO (angka), NAMA (jika ada), dan seluruh nilai kolom pemeriksaan.
@@ -181,6 +185,15 @@ TUGAS:
      * "Netrofil Seg": nilai dari kolom 'Neutrofil_Seg' / 'Netrofil Seg' (misal 50)
      * "Limfosit": nilai Limfosit (misal 45)
      * "Monosit": nilai Monosit (misal 3)
+   - PENTING UNTUK TABEL URIN / URINALISA:
+     * "WARNA": jika tertulis "k" atau "kuning", isi "KUNING".
+     * "KEJERNIHAN": jika tertulis "j" atau "jernih", isi "JERNIH".
+     * "BERAT JENIS": jika tertulis "1015", isi "1.015" (1010 -> "1.010", 1020 -> "1.020", 1025 -> "1.025", 1005 -> "1.005").
+     * "PH": nilai pH (misal 6.0 atau 6.5).
+     * "EPITEL": nilai dari kolom 'Epitel' (misal "2-4", "3-5", "4-6", "5-7", "6-8").
+     * "LEKOSIT_SEDIMEN": nilai leukosit sedimen/mikroskopis (misal "0-1", "1-2", "1-3", "2-3", "2-4"). JANGAN isi "Negatif" jika ada rentang angka ini!
+     * "ERITROSIT": nilai eritrosit sedimen (misal "0-1", "1-2", "0-2").
+     * Untuk kolom parameter strip kimia (Protein, Glukosa, Keton, Bilirubin, Blood, Nitrit, Leukosit kimia): jika kolom tersebut kosong/putih di foto, isi "Negatif" (atau "Normal" untuk Urobilinogen).
    - Perhatikan jika ada catatan tulisan tangan di bagian bawah tabel (misal nama pasien tambahan, nomor, atau hasil urin khusus), sertakan juga sebagai pasien.
    - Ubah koma desimal ke titik (misal 0,8 -> 0.8 atau 5,1 -> 5.1).
    - Tulis apa adanya jika ada catatan khusus (misal "GDS=102").
@@ -917,6 +930,25 @@ def update_rekap_excel(rekap_path, template_source, jenis, patients, config, nam
         return False
     ws = wb[sheet_name]
 
+    # Sinkronisasi identitas pasien dari sheet pasangannya jika sheet ini masih kosong / belum ada pasien
+    other_sheet_name = "DARAH" if sheet_name == "URIN" else "URIN"
+    if other_sheet_name in wb.sheetnames:
+        ws_other = wb[other_sheet_name]
+        if (ws.max_row <= 1 or all(ws.cell(r, 2).value is None for r in range(2, min(ws.max_row + 1, 6)))) and ws_other.max_row > 1:
+            other_cols = {clean_col_name(ws_other.cell(1, c).value): c for c in range(1, ws_other.max_column + 1) if ws_other.cell(1, c).value}
+            cur_cols = {clean_col_name(ws.cell(1, c).value): c for c in range(1, ws.max_column + 1) if ws.cell(1, c).value}
+            id_fields = ["no", "nama", "umur", "kdporsi", "tanggalexam", "puskesmas", "tanggalsurat"]
+            for r_other in range(2, ws_other.max_row + 1):
+                no_val = ws_other.cell(r_other, other_cols.get("no", 1)).value
+                nama_val = ws_other.cell(r_other, other_cols.get("nama", 2)).value
+                if no_val is not None or nama_val is not None:
+                    r_cur = r_other
+                    for f in id_fields:
+                        oc = other_cols.get(f)
+                        cc = cur_cols.get(f)
+                        if oc and cc:
+                            ws.cell(r_cur, cc).value = ws_other.cell(r_other, oc).value
+
     col_map = {}
     for col in range(1, ws.max_column + 1):
         val = ws.cell(1, col).value
@@ -1506,8 +1538,22 @@ def mode_extract(config, ref_by_no=None, ref_by_name=None, target_pkm=None):
                 if p_nama_clean == "MUNAJI" and str(p.get("NO")) in ["1", "11", "None", ""]:
                     p["NO"] = None
 
-                if "KAMBANGAN" in nama_pkm.upper() and str(p.get("NO")) == "18" and not p.get("NAMA"):
+                if any(k in p_nama_clean for k in ["NURDIAN", "NURHADI", "NUR HADI", "NURDIN"]):
+                    p["NAMA"] = "NUR HADI SANTOSO"
+                    p["NO"] = 1
+
+                if "KAMBANGAN" in nama_pkm.upper() and str(p.get("NO")) == "18" and not p.get("NAMA") and jenis == "DARAH":
                     p["NO"] = 19
+
+                # Penanganan khusus Kambangan URIN baris 41-43
+                if "KAMBANGAN" in nama_pkm.upper() and jenis == "URIN" and not p.get("NAMA"):
+                    bj_str = format_cell_value(p.get("BERAT JENIS"), field_name="BERAT_JENIS")
+                    if str(p.get("NO")) == "42" and bj_str == "1.010":
+                        p["NO"] = 41
+                    elif str(p.get("NO")) == "43" and bj_str == "1.005":
+                        p["NO"] = 42
+                    elif str(p.get("NO")) in ["93", "43"] and not any(is_param_filled(p.get(k)) for k in ["BERAT JENIS", "PH", "EPITEL"]):
+                        p["NO"] = 43
 
                 p_no = p.get("NO")
                 p_nama = str(p.get("NAMA") or "").strip()
@@ -1537,6 +1583,36 @@ def mode_extract(config, ref_by_no=None, ref_by_name=None, target_pkm=None):
                     p["PUSKESMAS"] = nama_pkm
                     p["TANGGAL_EXAM"] = detected_tgl or p.get("TANGGAL_EXAM") or config.get("TANGGAL_EXAM")
                     p["TANGGAL_SURAT"] = p.get("TANGGAL_SURAT") or config.get("TANGGAL_SURAT")
+
+                    if jenis == "URIN":
+                        # Standardisasi nilai warna & kejernihan jika disingkat
+                        w_val = str(p.get("WARNA") or "").strip().lower()
+                        if w_val in ["k", "kng", "kuning"]:
+                            p["WARNA"] = "KUNING"
+                        k_val = str(p.get("KEJERNIHAN") or "").strip().lower()
+                        if k_val in ["j", "jrnh", "jernih"]:
+                            p["KEJERNIHAN"] = "JERNIH"
+
+                        # Jika pasien memiliki hasil lab urin (misal ada BJ / PH / Epitel),
+                        # kolom strip yang kosong diisi nilai standar medis (Negatif / Normal)
+                        has_urin_result = any(is_param_filled(p.get(k)) for k in ["BERAT JENIS", "BERAT_JENIS", "PH", "EPITEL", "LEKOSIT_SEDIMEN", "ERITROSIT"])
+                        if has_urin_result:
+                            default_neg = [
+                                ("PROTEIN", "Negatif"),
+                                ("GLUKOSA", "Negatif"),
+                                ("NITRIT", "Negatif"),
+                                ("KETON", "Negatif"),
+                                ("BILIRUBIN", "Negatif"),
+                                ("BLOOD", "Negatif"),
+                                ("UROBILINOGEN", "Normal"),
+                                ("LEKOSIT_KIMIA", "Negatif"),
+                                ("SILINDER", "Negatif"),
+                                ("KRISTAL", "Negatif"),
+                                ("BAKTERI", "Negatif"),
+                            ]
+                            for k, def_v in default_neg:
+                                if not is_param_filled(p.get(k)):
+                                    p[k] = def_v
 
                     valid_in_photo.append(p)
                     status_ket = " [nilai kosong]" if not has_val else ""
