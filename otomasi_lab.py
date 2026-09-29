@@ -33,7 +33,10 @@ API_KEY = os.environ.get("GEMINI_API_KEY")
 if not API_KEY:
     raise ValueError("GEMINI_API_KEY tidak ditemukan di environment maupun .env file!")
 
-client = genai.Client(api_key=API_KEY)
+client = genai.Client(
+    api_key=API_KEY,
+    http_options=types.HttpOptions(timeout=60000)
+)
 
 
 def load_config(config_path=BASE_DIR / "config.txt"):
@@ -246,10 +249,8 @@ def analyze_image(img_path):
     image_part = types.Part.from_bytes(data=jpeg_bytes, mime_type="image/jpeg")
 
     models_to_try = [
-        ("gemini-2.5-flash", None),
-        ("gemini-3.5-flash", None),
-        ("gemini-3.8-flash", None),
         ("gemini-3.5-flash-lite", None),
+        ("gemini-3.8-flash", None),
         ("gemini-3.1-flash-lite", None),
     ]
     last_err = None
@@ -261,7 +262,7 @@ def analyze_image(img_path):
                 response_mime_type="application/json",
                 thinking_config=types.ThinkingConfig(thinking_budget=tb) if tb is not None else None
             )
-            max_attempts = 3
+            max_attempts = 2
             for attempt in range(max_attempts):
                 try:
                     response = client.models.generate_content(
@@ -277,19 +278,26 @@ def analyze_image(img_path):
                 except Exception as e:
                     last_err = e
                     err_str = str(e)
-                    is_transient = any(code in err_str for code in ["503", "UNAVAILABLE", "429", "RESOURCE_EXHAUSTED"])
+
+                    # Jika 404 (model dipensiunkan) atau 429 (kuota habis), langsung beralih ke model lain (fail-fast)
+                    if "404" in err_str or any(code in err_str for code in ["429", "RESOURCE_EXHAUSTED", "quota", "Quota"]):
+                        print(f" [WARN] Model {model_name} dialihkan (tidak tersedia/limit). Mencoba model berikutnya...", flush=True)
+                        break
+
+                    is_transient = any(code in err_str.lower() for code in ["503", "unavailable", "deadline_exceeded", "timed out", "timeout"])
                     if is_transient and attempt < max_attempts - 1:
-                        backoff = (attempt + 1) * 3 + random.uniform(1.0, 2.5)
-                        print(f" [INFO] Server Google Gemini sedang antre/padat ({type(e).__name__}). Menunggu {backoff:.0f} detik lalu mencoba lagi ({attempt + 1}/{max_attempts})...", flush=True)
+                        backoff = (attempt + 1) * 2 + random.uniform(0.5, 1.5)
+                        print(f" [INFO] Server Google Gemini sedang antre ({type(e).__name__}). Menunggu {backoff:.0f} detik lalu mencoba lagi ({attempt + 1}/{max_attempts})...", flush=True)
                         time.sleep(backoff)
                         continue
+
                     print(f" [WARN] Model {model_name} dialihkan ({type(e).__name__}). Mencoba model berikutnya...", flush=True)
-                    time.sleep(1)
+                    time.sleep(0.5)
                     break
 
         if cycle == 0:
-            print(" [INFO] Seluruh model sedang mengalami antrean trafik serentak di Google. Menunggu 8 detik sebelum putaran kedua...", flush=True)
-            time.sleep(8)
+            print(" [INFO] Seluruh model sedang mengalami antrean trafik serentak di Google. Menunggu 5 detik sebelum putaran kedua...", flush=True)
+            time.sleep(5)
 
     raise last_err
 
