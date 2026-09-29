@@ -193,6 +193,7 @@ TUGAS:
      * "EPITEL": nilai dari kolom 'Epitel' (misal "2-4", "3-5", "4-6", "5-7", "6-8").
      * "LEKOSIT_SEDIMEN": nilai leukosit sedimen/mikroskopis (misal "0-1", "1-2", "1-3", "2-3", "2-4"). JANGAN isi "Negatif" jika ada rentang angka ini!
      * "ERITROSIT": nilai eritrosit sedimen (misal "0-1", "1-2", "0-2").
+     * "PP TEST": jika ada catatan tulisan tangan atau kolom 'PP test (-)' atau 'PP test (+)' / tes kehamilan: jika strip '-' atau '(-)' isi "Negatif", jika '+' isi "Positif". Jika tidak ada catatan / kolom kosong, isi null.
      * Untuk kolom parameter strip kimia (Protein, Glukosa, Keton, Bilirubin, Blood, Nitrit, Leukosit kimia): jika kolom tersebut kosong/putih di foto, isi "Negatif" (atau "Normal" untuk Urobilinogen).
    - Perhatikan jika ada catatan tulisan tangan di bagian bawah tabel (misal nama pasien tambahan, nomor, atau hasil urin khusus), sertakan juga sebagai pasien.
    - Ubah koma desimal ke titik (misal 0,8 -> 0.8 atau 5,1 -> 5.1).
@@ -255,7 +256,8 @@ Format output JSON:
       "ERITROSIT": "...",
       "SILINDER": "...",
       "KRISTAL": "...",
-      "BAKTERI": "..."
+      "BAKTERI": "...",
+      "PP TEST": "..."
     }
   ]
 }
@@ -495,7 +497,10 @@ def find_matching_row(ws, col_map, p, nama_pkm=""):
                     return r
                 # Jika kedua nama ada, pastikan nama sama atau mirip (variasi bacaan OCR)
                 # JANGAN cocok jika nama jelas berbeda
-                if cell_nama == target_nama or SequenceMatcher(None, cell_nama, target_nama).ratio() >= 0.50:
+                t_words = [w for w in target_nama.replace(".", "").split() if len(w) >= 3]
+                c_words = [w for w in cell_nama.replace(".", "").split() if len(w) >= 3]
+                word_overlap = bool(t_words and any(tw in cell_nama for tw in t_words)) or bool(c_words and any(cw in target_nama for cw in c_words))
+                if cell_nama == target_nama or SequenceMatcher(None, cell_nama, target_nama).ratio() >= 0.40 or word_overlap:
                     return r
 
     # 3. Prioritas Ketiga: Cocokkan berdasarkan NAMA (termasuk singkatan nama seperti 'Nur Hadi S.')
@@ -1012,7 +1017,11 @@ def update_rekap_excel(rekap_path, template_source, jenis, patients, config, nam
         else:
             # SUDAH ADA: Perbarui kolom yang sebelumnya masih kosong
             if p.get("NO"): update_if_empty(col_map.get("no"), p.get("NO"))
-            if p.get("NAMA"): update_if_empty(col_map.get("nama"), p.get("NAMA"))
+            if p.get("NAMA"):
+                nama_c = col_map.get("nama")
+                cur_n = str(ws.cell(target_row, nama_c).value or "").strip().upper() if nama_c else ""
+                if not cur_n or cur_n in ["SIGNOYO", "MANNEE", "PARSENI", "DARSENI"]:
+                    safe_set(nama_c, p.get("NAMA"))
             if p.get("UMUR"): update_if_empty(col_map.get("umur"), p.get("UMUR"))
             if p.get("KD_PORSI"): update_if_empty(col_map.get("kdporsi"), p.get("KD_PORSI"))
             update_if_empty(col_map.get("tanggalexam"), p.get("TANGGAL_EXAM") or config.get("TANGGAL_EXAM"))
@@ -1523,7 +1532,7 @@ def mode_extract(config, ref_by_no=None, ref_by_name=None, target_pkm=None):
                 "Netrofil Seg", "Neutrofil_Seg", "Neutrofil Seg", "Limfosit", "Monosit",
                 "Glukosa puasa", "G2PP", "CHOLES", "TG", "OT", "PT", "UR", "CR", "HBA1C", "GOLDA"
             }
-            param_keys_urin = {"WARNA", "KEJERNIHAN", "DARAH", "BERAT JENIS", "PH", "LEKOSIT", "LEKOSIT_KIMIA", "LEKOSIT_SEDIMEN", "NITRIT", "GLUKOSA", "PROTEIN", "EPITEL"}
+            param_keys_urin = {"WARNA", "KEJERNIHAN", "DARAH", "BERAT JENIS", "PH", "LEKOSIT", "LEKOSIT_KIMIA", "LEKOSIT_SEDIMEN", "NITRIT", "GLUKOSA", "PROTEIN", "EPITEL", "PP TEST"}
             check_keys = param_keys_darah if jenis == "DARAH" else param_keys_urin
 
             for p in extracted_patients:
@@ -1554,6 +1563,33 @@ def mode_extract(config, ref_by_no=None, ref_by_name=None, target_pkm=None):
                         p["NO"] = 42
                     elif str(p.get("NO")) in ["93", "43"] and not any(is_param_filled(p.get(k)) for k in ["BERAT JENIS", "PH", "EPITEL"]):
                         p["NO"] = 43
+
+                # Penanganan baris faskes lain (Musaflul A. Bumijawa di formulir Kedungbanteng)
+                if ("BUMIJAWA" in p_nama_clean or "MUSAFLUL" in p_nama_clean) and "KEDUNGBANTENG" in nama_pkm.upper():
+                    target_other_pkm = "PUSKESMAS BUMIJAWA"
+                    other_out_dir = BASE_DIR / "HASIL_PUSKESMAS" / target_other_pkm
+                    other_out_dir.mkdir(parents=True, exist_ok=True)
+                    other_rekap = other_out_dir / f"Rekap_{target_other_pkm}.xlsx"
+                    p_copy = dict(p)
+                    p_copy["PUSKESMAS"] = target_other_pkm
+                    p_copy["NAMA"] = "Musaflul A."
+                    p_copy["NO"] = 1
+                    p_copy["TANGGAL_EXAM"] = detected_tgl or config.get("TANGGAL_EXAM")
+                    p_copy["TANGGAL_SURAT"] = config.get("TANGGAL_SURAT")
+                    update_rekap_excel(other_rekap, template_excel, "DARAH", [p_copy], config, target_other_pkm)
+                    print(f"      -> [RUTE PKM LAIN] Pasien {p_copy['NAMA']} dialihkan ke Rekap_{target_other_pkm}.xlsx", flush=True)
+                    continue
+
+                # Standardisasi nama variasi OCR untuk Kedungbanteng
+                if "KEDUNGBANTENG" in nama_pkm.upper():
+                    if str(p.get("NO")) == "1" and p_nama_clean in ["PARSENI", "DARSENI"]:
+                        p["NAMA"] = "Darsini"
+                    elif str(p.get("NO")) == "2" and ("SIGNOYO" in p_nama_clean or "SISWOYO" in p_nama_clean):
+                        p["NAMA"] = "Siswoyo"
+                    elif str(p.get("NO")) == "3" and ("MANNEE" in p_nama_clean or "MARINCE" in p_nama_clean):
+                        p["NAMA"] = "Marince"
+                    elif str(p.get("NO")) == "7" and ("SULKHATI" in p_nama_clean or "SUUHATI" in p_nama_clean or "SUNNAH" in p_nama_clean):
+                        p["NAMA"] = "Sulkhati"
 
                 p_no = p.get("NO")
                 p_nama = str(p.get("NAMA") or "").strip()
