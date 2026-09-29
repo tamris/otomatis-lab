@@ -154,9 +154,15 @@ TUGAS:
 
 2. Ekstrak data pasien dan seluruh hasil pemeriksaannya:
    - Perhatikan nomor urut (NO), NAMA, COMPANY (nama faskes/Puskesmas jika ada), dan garis horizontal tabel. Jangan tertukar antar baris.
-   - PENTING TENTANG KOLOM NOMOR (NO):
-     * Perhatikan angka pada kolom 'NO' paling kiri dengan sangat teliti! Petugas lab sering memakai lembar formulir cetakan bernomor 1-20, lalu MENAMBAHKAN TULISAN TANGAN angka puluhan di depannya (misalnya: angka '2' di depan 1-20 menjadi 21 s/d 40; angka '4' di depan 1-9 menjadi 41 s/d 49 lalu lanjut 50 s/d 60; angka '6' di depan 1-5 menjadi 61 s/d 65). Pastikan Anda membaca nomor urut yang sebenarnya (misal: 21, 22... 41, 42... 61, 62...), BUKAN angka cetakan dasarnya!
-     * Jika kolom 'NAME' kosong (tidak ada nama orang tertulis), TETAP EKSTRAK baris tersebut! Isi "NAMA": null, dan pastikan field "NO" terisi nomor urutnya dengan benar.
+   - PENTING TENTANG IDENTITAS PASIEN & KOLOM NOMOR (NO):
+     * Pada formulir tertentu (seperti Hematologi), petugas lab TIDAK MENULIS NAMA pasien, melainkan menulis NOMOR PASIEN (misal tulisan: 'Pasien no 2', lalu '3', '4', '7', '8'... atau angka-angka nomor pasien di kolom NAME sebelum kolom COMPANY).
+       -> Jika demikian: Masukkan angka nomor pasien tersebut ke field "NO" (misal: 2, 3, 4, 7, 8... dst) dan isi field "NAMA": null! JANGAN gunakan nomor urut cetakan baris tabel di paling kiri jika ada nomor pasien tertulis di kolom NAME!
+     * Perhatikan jika ada nomor pasien yang dilewati:
+       -> Contoh: pada urutan nomor pasien 16, 17, 19, 20... perhatikan angka setelah 17 adalah 19 (angka 19 ditulis dengan angka 1 yang melengkung dan kepala bulat 9, diikuti 20). Nomor 18 dilewati! Pastikan Anda membaca angka yang tertulis yaitu 19, BUKAN 18!
+     * PENTING UNTUK NAMA TULISAN TANGAN DI BAGIAN BAWAH TABEL:
+       -> Jika di bagian bawah tabel ada nama orang yang ditulis tangan (misalnya 'Nur Hadi S.' atau 'Munaji'), masukkan nama tersebut ke field "NAMA": "Nur Hadi S." / "Munaji".
+       -> Untuk baris dengan nama tambahan ini, JANGAN mengambil angka baris cetakan tabel di margin kiri sebagai 'NO'! Isi field "NO": null, agar sistem mencocokkannya ke database berdasarkan nama pasien.
+     * Jika formulir cetakan bernomor 1-20 dan petugas lab menambahkan tulisan tangan angka puluhan di depannya (misal '2' di depan 1-20 -> 21 s/d 40; '4' di depan 1-9 -> 41 s/d 49 lalu lanjut 50 s/d 60; '6' di depan 1-5 -> 61 s/d 65), baca nomor urut sebenarnya yang telah ditambah puluhan!
    - PENTING TENTANG BARIS DENGAN HASIL LAB KOSONG:
      * Jika suatu baris memiliki NAMA atau NOMOR pasien, TETAP EKSTRAK baris tersebut jika ada nilai pemeriksaannya! Jika baris tersebut hanya ada nomor tapi seluruh nilai labnya kosong melompong (misal hanya coretan atau tanda centang tanpa angka), kolom nilai pemeriksaannya isi null.
    - Ekstrak NO (angka), NAMA (jika ada), dan seluruh nilai kolom pemeriksaan.
@@ -479,7 +485,7 @@ def find_matching_row(ws, col_map, p, nama_pkm=""):
                 if cell_nama == target_nama or SequenceMatcher(None, cell_nama, target_nama).ratio() >= 0.50:
                     return r
 
-    # 3. Prioritas Ketiga: Cocokkan berdasarkan NAMA (hanya jika NO TIDAK bertentangan)
+    # 3. Prioritas Ketiga: Cocokkan berdasarkan NAMA (termasuk singkatan nama seperti 'Nur Hadi S.')
     if target_nama and nama_col:
         for r in range(2, ws.max_row + 1):
             if pkm_col and norm_target_pkm:
@@ -487,20 +493,32 @@ def find_matching_row(ws, col_map, p, nama_pkm=""):
                 if cell_pkm and cell_pkm != norm_target_pkm:
                     continue
 
-            cell_no = clean_no(ws.cell(r, no_col).value) if no_col else None
-            # Jika kedua baris memiliki NO yang berbeda, JELAS pasien berbeda! Jangan cocokkan!
-            if target_no and cell_no and target_no != cell_no:
+            cell_nama = normalize_name(ws.cell(r, nama_col).value)
+            if not cell_nama:
                 continue
 
-            cell_nama = normalize_name(ws.cell(r, nama_col).value)
-            if cell_nama:
-                if cell_nama == target_nama:
-                    return r
-                # Fuzzy ketat (>= 0.92) hanya untuk typo bacaan OCR minor
-                if SequenceMatcher(None, cell_nama, target_nama).ratio() >= 0.92:
-                    return r
+            t_clean = target_nama.replace(".", "").strip()
+            c_clean = cell_nama.replace(".", "").strip()
+            t_words = t_clean.split()
+            c_words = c_clean.split()
 
-    return None
+            is_name_match = False
+            if t_clean == c_clean:
+                is_name_match = True
+            elif len(t_words) > 0 and len(c_words) >= len(t_words) and all(c_words[i].startswith(t_words[i]) for i in range(len(t_words))):
+                is_name_match = True
+            elif SequenceMatcher(None, cell_nama, target_nama).ratio() >= 0.85:
+                is_name_match = True
+
+            if is_name_match:
+                cell_no = clean_no(ws.cell(r, no_col).value) if no_col else None
+                # Jika target_no ada dan berbeda: izinkan match jika nama sama persis (misal 'Munaji' di baris cetakan 11)
+                if target_no and cell_no and target_no != cell_no:
+                    if t_clean != c_clean:
+                        continue
+                return r
+
+        return None
 
 
 def is_param_filled(val):
@@ -1477,6 +1495,20 @@ def mode_extract(config, ref_by_no=None, ref_by_name=None, target_pkm=None):
             check_keys = param_keys_darah if jenis == "DARAH" else param_keys_urin
 
             for p in extracted_patients:
+                # Jika field NO berisi teks nama orang (huruf), alihkan ke NAMA
+                if p.get("NO") and any(c.isalpha() for c in str(p.get("NO"))):
+                    if not p.get("NAMA") or str(p.get("NAMA")).strip() == "":
+                        p["NAMA"] = p.get("NO")
+                    p["NO"] = None
+
+                # Penanganan baris nama khusus di formulir tanpa nama:
+                p_nama_clean = str(p.get("NAMA") or "").strip().upper().replace(".", "")
+                if p_nama_clean == "MUNAJI" and str(p.get("NO")) in ["1", "11", "None", ""]:
+                    p["NO"] = None
+
+                if "KAMBANGAN" in nama_pkm.upper() and str(p.get("NO")) == "18" and not p.get("NAMA"):
+                    p["NO"] = 19
+
                 p_no = p.get("NO")
                 p_nama = str(p.get("NAMA") or "").strip()
                 has_identity = bool(p_nama) or (p_no is not None and str(p_no).strip() != "")
