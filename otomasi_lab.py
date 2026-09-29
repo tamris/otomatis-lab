@@ -655,10 +655,28 @@ def format_cell_value(val, fmt="", field_name=""):
         except ValueError:
             return s
 
-    # 4. Parameter dengan 1 angka desimal (PH, Hemoglobin, Lekosit, Creatinine, HbA1c, Hematokrit, MCV, MCH, MCHC)
+    # 4. Parameter integer tanpa desimal (Hematokrit, MCV, MCH, MCHC, Trombosit, Segmen, Limfosit, Gula, Kolesterol, Ureum, dll)
+    integer_fields = [
+        "HEMATOKRIT", "MCV", "MCH", "MCHC", "TROMBOSIT", "NETROFIL SEG", "NEUTROFIL SEG",
+        "LIMFOSIT", "MONOSIT", "EOSINOFIL", "BASOFIL", "NETROFIL BATANG", "NEUTROFIL BATANG",
+        "GLUKOSA", "CHOLES", "CHOL", "TG", "TRIGLISERIDA", "SGOT", "OT", "SGPT", "PT", "UREUM", "UR",
+        "LED"
+    ]
+    if any(k == field_upper or field_upper.startswith(k) or k in field_upper for k in integer_fields):
+        s_clean = s.replace(",", ".").strip()
+        try:
+            f = float(s_clean)
+            if f.is_integer():
+                return str(int(f))
+            return s_clean
+        except ValueError:
+            if s_clean.endswith(".0"):
+                return s_clean[:-2]
+            return s
+
+    # 5. Parameter dengan 1 angka desimal (PH, Hemoglobin, Lekosit, Creatinine, HbA1c)
     decimal_1_fields = [
-        "PH", "HEMOGLOBIN", "HB", "LEKOSIT", "CREATININE", "CR",
-        "HBA1C", "HEMATOKRIT", "MCV", "MCH", "MCHC"
+        "PH", "HEMOGLOBIN", "HB", "LEKOSIT", "CREATININE", "CR", "HBA1C"
     ]
     is_decimal_1 = any(k == field_upper or field_upper.startswith(k) for k in decimal_1_fields)
     has_dec_1_fmt = bool(fmt and (".0" in fmt and ".00" not in fmt))
@@ -766,7 +784,7 @@ def apply_excel_styling(wb):
                 if not h:
                     continue
                 h_clean = clean_col_name(h)
-                if any(k in h_clean for k in ["hemoglobin", "lekosit", "hematokrit", "mcv", "mch", "mchc", "creatinine", "hba1c"]):
+                if any(k in h_clean for k in ["hemoglobin", "lekosit", "creatinine", "hba1c"]):
                     for r in range(2, ws.max_row + 1):
                         cell = ws.cell(r, c)
                         if cell.value is not None:
@@ -782,6 +800,26 @@ def apply_excel_styling(wb):
                             if formatted:
                                 cell.value = formatted
                                 cell.number_format = '@'
+                elif any(k in h_clean for k in ["hematokrit", "mcv", "mch", "mchc", "trombosit", "netrofil", "limfosit", "monosit", "eosinofil", "basofil", "led", "glukosa", "chol", "trigli", "sgot", "sgpt", "ureum"]):
+                    for r in range(2, ws.max_row + 1):
+                        cell = ws.cell(r, c)
+                        if cell.value is not None:
+                            s_val = str(cell.value).strip().replace(",", ".")
+                            try:
+                                f_val = float(s_val)
+                                if f_val.is_integer():
+                                    cell.value = int(f_val)
+                                    cell.number_format = '0'
+                                else:
+                                    cell.value = f_val
+                                    cell.number_format = '0.0'
+                            except ValueError:
+                                if s_val.endswith(".0"):
+                                    try:
+                                        cell.value = int(float(s_val))
+                                        cell.number_format = '0'
+                                    except ValueError:
+                                        pass
 
 
 def init_rekap_excel(rekap_path, template_source, nama_pkm, config, ref_by_no=None):
