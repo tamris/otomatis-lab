@@ -13,6 +13,8 @@ from openpyxl.styles import Border, Side, PatternFill
 from PIL import Image
 from dotenv import load_dotenv
 from mailmerge import MailMerge
+import docx
+from docx.oxml import parse_xml
 import win32com.client
 from google import genai
 from google.genai import types
@@ -88,6 +90,72 @@ def load_workbook_safe(file_path, data_only=True):
             return openpyxl.load_workbook(bio, data_only=data_only)
         except Exception as e:
             raise PermissionError(f"Gagal membaca '{p.name}' karena sedang dikunci oleh aplikasi lain: {e}")
+
+
+def load_docx_template_safe(file_path):
+    """
+    Membaca file template Word (.docx) secara aman ke memori, bahkan jika file sedang dibuka
+    di Microsoft Word. Jika template memiliki baris 'PP Test' (pada lembar Urin), fungsi ini
+    secara otomatis menormalisasi field MERGEFIELD PP_TEST agar terbaca sempurna oleh MailMerge.
+    Mengembalikan BytesIO objek yang siap digunakan oleh MailMerge.
+    """
+    p = Path(file_path)
+    data = None
+    try:
+        data = p.read_bytes()
+    except (PermissionError, OSError):
+        try:
+            import win32file
+            import win32con
+
+            h = win32file.CreateFile(
+                str(p.resolve()),
+                win32con.GENERIC_READ,
+                win32con.FILE_SHARE_READ | win32con.FILE_SHARE_WRITE | win32con.FILE_SHARE_DELETE,
+                None,
+                win32con.OPEN_EXISTING,
+                win32con.FILE_ATTRIBUTE_NORMAL,
+                None,
+            )
+            size = win32file.GetFileSize(h)
+            hr, data = win32file.ReadFile(h, size)
+            win32file.CloseHandle(h)
+        except Exception as e:
+            raise PermissionError(f"Gagal membaca template '{p.name}' karena dikunci aplikasi lain: {e}")
+
+    bio = io.BytesIO(data)
+    try:
+        doc = docx.Document(bio)
+        modified = False
+        for t in doc.tables:
+            for r in t.rows:
+                if any("PP Test" in c.text or "PP TEST" in c.text for c in r.cells):
+                    if len(r.cells) > 2:
+                        tc = r.cells[2]._tc
+                        for p_elem in list(tc.p_lst):
+                            tc.remove(p_elem)
+                        clean_xml = (
+                            '<w:p xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+                            '  <w:pPr><w:jc w:val="center"/><w:rPr><w:rFonts w:ascii="Arial" w:hAnsi="Arial"/><w:b/><w:sz w:val="19"/><w:szCs w:val="19"/></w:rPr></w:pPr>'
+                            '  <w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+                            '  <w:r><w:instrText xml:space="preserve"> MERGEFIELD PP_TEST </w:instrText></w:r>'
+                            '  <w:r><w:fldChar w:fldCharType="separate"/></w:r>'
+                            '  <w:r><w:t>«PP_TEST»</w:t></w:r>'
+                            '  <w:r><w:fldChar w:fldCharType="end"/></w:r>'
+                            '</w:p>'
+                        )
+                        tc.append(parse_xml(clean_xml))
+                        modified = True
+        if modified:
+            out_bio = io.BytesIO()
+            doc.save(out_bio)
+            out_bio.seek(0)
+            return out_bio
+    except Exception:
+        pass
+
+    bio.seek(0)
+    return bio
 
 
 def load_reference_patients(ref_path=BASE_DIR / "data_rujukan_pasien.xlsx"):
@@ -1423,6 +1491,8 @@ def prepare_urin_dict(p, config, nama_pkm):
         "ERITROSIT": str(p.get("ERITROSIT", "") or ""),
         "KRISTAL": str(p.get("KRISTAL", "") or ""),
         "BAKTERI": str(p.get("BAKTERI", "") or ""),
+        "PP_TEST": str(p.get("PP TEST") or p.get("PP_TEST") or ""),
+        "PP TEST": str(p.get("PP TEST") or p.get("PP_TEST") or ""),
     }
 
 
@@ -1884,7 +1954,8 @@ def mode_generate(config, word_app=None, target_pkm=None, force=False):
                 template_darah = BASE_DIR / "NEW TEMPLATE SAT DARAH.docx"
 
                 darah_dicts = [prepare_darah_dict(p, config, nama_pkm) for p in valid_darah]
-                with MailMerge(template_darah) as mm:
+                tpl_darah_io = load_docx_template_safe(template_darah)
+                with MailMerge(tpl_darah_io) as mm:
                     mm.merge_templates(darah_dicts, separator="page_break")
                     mm.write(str(out_darah_docx))
 
@@ -1910,9 +1981,25 @@ def mode_generate(config, word_app=None, target_pkm=None, force=False):
                 template_urin = BASE_DIR / "NEW TEMPLATE SAT URIN.docx"
 
                 urin_dicts = [prepare_urin_dict(p, config, nama_pkm) for p in valid_urin]
-                with MailMerge(template_urin) as mm:
+                tpl_urin_io = load_docx_template_safe(template_urin)
+                with MailMerge(tpl_urin_io) as mm:
                     mm.merge_templates(urin_dicts, separator="page_break")
                     mm.write(str(out_urin_docx))
+
+                # Post-processing: Hapus baris PP Test jika pasien tidak memiliki hasil PP Test
+                doc_urin = docx.Document(str(out_urin_docx))
+                for idx, t in enumerate(doc_urin.tables):
+                    if idx < len(valid_urin):
+                        p = valid_urin[idx]
+                        pp_val = p.get("PP TEST") or p.get("PP_TEST")
+                        has_pp = is_param_filled(pp_val) and str(pp_val).strip() not in ["-", "NONE", "NULL"]
+                        if not has_pp:
+                            for r in t.rows:
+                                if any("PP Test" in c.text or "PP TEST" in c.text for c in r.cells):
+                                    tr = r._tr
+                                    tr.getparent().remove(tr)
+                                    break
+                doc_urin.save(str(out_urin_docx))
 
                 convert_single_docx_to_pdf_fast(word_app, out_urin_docx, out_urin_pdf)
                 print(f" [PDF] Selesai: All_Hasil_Urin_{nama_pkm}.pdf ({len(valid_urin)} pasien valid) - {time.time() - t0:.1f} detik", flush=True)
