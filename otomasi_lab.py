@@ -247,9 +247,9 @@ TUGAS:
      * "MCV": nilai MCV (misal 91)
      * "MCH": nilai MCH (misal 29.4)
      * "MCHC": nilai MCHC (misal 32.4)
-     * "Basofil": nilai Basofil (jika strip "-" abaikan/null)
+     * "Basofil": nilai Basofil. SANGAT PENTING: jika kolom Basofil di kertas foto kosong, tidak ada nilainya, atau berupa strip "-", ALWAYS isi angka 0.
      * "Eosinofil": nilai Eosinofil (misal 1 atau 2)
-     * "Netrofil Batang": nilai dari kolom 'Neutrofil_Bat' / 'Netrofil Batang'
+     * "Netrofil Batang": nilai dari kolom 'Neutrofil_Bat' / 'Netrofil Batang'. SANGAT PENTING: jika kolom Neutrofil Batang di kertas foto kosong, tidak ada nilainya, atau berupa strip "-", ALWAYS isi angka 0.
      * "Netrofil Seg": nilai dari kolom 'Neutrofil_Seg' / 'Netrofil Seg' (misal 50)
      * "Limfosit": nilai Limfosit (misal 45)
      * "Monosit": nilai Monosit (misal 3)
@@ -1192,6 +1192,15 @@ def update_rekap_excel(rekap_path, template_source, jenis, patients, config, nam
                     # Pasien SUDAH ADA: Perbarui kolom yang sebelumnya masih kosong
                     update_if_empty(target_col, p_val)
 
+        if jenis == "DARAH":
+            # Selalu pastikan kolom Basofil dan Netrofil Batang bernilai 0 jika kosong
+            baso_c = col_map.get("basofil")
+            if baso_c and not is_param_filled(ws.cell(target_row, baso_c).value):
+                ws.cell(target_row, baso_c, value=0)
+            nb_c = col_map.get("netrofilbatang")
+            if nb_c and not is_param_filled(ws.cell(target_row, nb_c).value):
+                ws.cell(target_row, nb_c, value=0)
+
     apply_excel_styling(wb, config)
     # Coba simpan hingga 4 kali jika file sedang dibuka di Microsoft Excel
     for save_att in range(4):
@@ -1365,6 +1374,11 @@ def read_patients_from_sheet(ws, jenis="DARAH"):
                 c_idx = col_map.get(col_k)
                 cell = ws.cell(r, c_idx) if c_idx else None
                 p_data[dict_k] = format_cell_value(cell.value, cell.number_format, dict_k) if cell and cell.value is not None else None
+            # Selalu pastikan kolom Basofil dan Netrofil Batang bernilai '0' jika kosong
+            if not is_param_filled(p_data.get("Basofil")):
+                p_data["Basofil"] = "0"
+            if not is_param_filled(p_data.get("Netrofil Batang")):
+                p_data["Netrofil Batang"] = "0"
         else:
             # 1. Parameter KIMIA URIN
             kimia_params = [
@@ -1447,8 +1461,8 @@ def prepare_darah_dict(p, config, nama_pkm):
         "MCHC": format_cell_value(p.get("MCHC", ""), field_name="MCHC"),
         "LED": str(p.get("LED", "") or ""),
         "Eosinofil": str(p.get("Eosinofil", "") or ""),
-        "Basofil": str(p.get("Basofil", "") or ""),
-        "Netrofil_Batang": str(p.get("Netrofil Batang", "") or ""),
+        "Basofil": "0" if not is_param_filled(p.get("Basofil")) else format_cell_value(p.get("Basofil"), field_name="Basofil"),
+        "Netrofil_Batang": "0" if not is_param_filled(p.get("Netrofil Batang") if p.get("Netrofil Batang") is not None else p.get("Neutrofil_Bat")) else format_cell_value(p.get("Netrofil Batang") or p.get("Neutrofil_Bat"), field_name="Netrofil Batang"),
         "Netrofil_Seg": str(p.get("Netrofil Seg", "") or ""),
         "Limfosit": str(p.get("Limfosit", "") or ""),
         "Monosit": str(p.get("Monosit", "") or ""),
@@ -1760,6 +1774,15 @@ def mode_extract(config, ref_by_no=None, ref_by_name=None, target_pkm=None):
                     p["PUSKESMAS"] = nama_pkm
                     p["TANGGAL_EXAM"] = detected_tgl or p.get("TANGGAL_EXAM") or config.get("TANGGAL_EXAM")
                     p["TANGGAL_SURAT"] = p.get("TANGGAL_SURAT") or config.get("TANGGAL_SURAT")
+                    if jenis == "DARAH":
+                        # Kolom Basofil dan Neutrofil Batang selalu 0 jika kosong di kertas foto
+                        if not is_param_filled(p.get("Basofil")):
+                            p["Basofil"] = 0
+                        nb_val = p.get("Netrofil Batang") if p.get("Netrofil Batang") is not None else (p.get("Neutrofil_Bat") if p.get("Neutrofil_Bat") is not None else p.get("Neutrofil Batang"))
+                        if not is_param_filled(nb_val):
+                            p["Netrofil Batang"] = 0
+                            p["Neutrofil_Bat"] = 0
+                            p["Neutrofil Batang"] = 0
 
                     if jenis == "URIN":
                         # Standardisasi nilai warna & kejernihan jika disingkat
