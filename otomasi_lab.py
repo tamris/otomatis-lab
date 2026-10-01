@@ -259,9 +259,11 @@ TUGAS:
      * "KEJERNIHAN": jika tertulis "j" atau "jernih", isi "JERNIH" (CAPSLOCK).
      * "BERAT JENIS": jika tertulis "1015", isi "1.015" (1010 -> "1.010", 1020 -> "1.020", 1025 -> "1.025", 1005 -> "1.005").
      * "PH": nilai pH (misal 6.0 atau 6.5).
-     * "EPITEL": nilai dari kolom 'Epitel' (misal "2-4", "3-5", "4-6", "5-7", "6-8").
-     * "LEKOSIT_SEDIMEN": nilai leukosit sedimen/mikroskopis (misal "0-1", "1-2", "1-3", "2-3", "2-4"). JANGAN isi "NEGATIF" jika ada rentang angka ini!
-     * "ERITROSIT": nilai eritrosit sedimen (misal "0-1", "1-2", "0-2").
+     * SANGAT PENTING URUTAN KOLOM SEDIMEN (KANAN):
+       1. "EPITEL": angka rentang PERTAMA setelah Nitrit (misal "3-4", "5-6", "4-7", "2-5", "5-8"). Kolom ini SELALU Epitel!
+       2. "LEKOSIT_SEDIMEN": angka rentang KEDUA setelah Epitel (misal "1-3", "2-3", "1-4", "0-4", "0-2").
+       3. "ERITROSIT": angka rentang KETIGA setelah Leukosit (misal "0-1", "0-3", "1-3", "0-2").
+       JANGAN SAMPAI TERTUKAR/BERGESER! Kolom paling kiri dari ketiga angka sedimen adalah 'Epitel'!
      * "PP TEST": jika ada catatan tulisan tangan atau kolom 'PP test (-)' atau 'PP test (+)' / tes kehamilan: jika strip '-' atau '(-)' isi "NEGATIF", jika '+' isi "POSITIF" (selalu CAPSLOCK). Jika tidak ada catatan / kolom kosong, isi null.
      * Untuk kolom parameter strip kimia (Protein, Glukosa, Keton, Bilirubin, Blood, Nitrit, Leukosit kimia): jika kolom tersebut kosong/putih di foto, ALWAYS isi "NEGATIF" (atau "NORMAL" untuk Urobilinogen) dalam HURUF BESAR / CAPSLOCK.
    - Perhatikan jika ada catatan tulisan tangan di bagian bawah tabel (misal nama pasien tambahan, nomor, atau hasil urin khusus), sertakan juga sebagai pasien.
@@ -1106,7 +1108,10 @@ def update_rekap_excel(rekap_path, template_source, jenis, patients, config, nam
     for col in range(1, ws.max_column + 1):
         val = ws.cell(1, col).value
         if val:
-            col_map[clean_col_name(val)] = col
+            cname = clean_col_name(val)
+            col_map[cname] = col
+            if cname in ["reduksi", "glukosareduksi"]:
+                col_map["glukosa"] = col
 
     urin_lekosit_kimia_col = None
     urin_lekosit_sedimen_col = None
@@ -1273,7 +1278,7 @@ def validate_urin_patient(p):
         ("BERAT JENIS", ["BERAT JENIS", "beratjenis", "BERAT_JENIS"]),
         ("PH", ["PH", "ph"]),
         ("PROTEIN", ["PROTEIN", "protein"]),
-        ("GLUKOSA", ["GLUKOSA", "glukosa"]),
+        ("GLUKOSA", ["GLUKOSA", "glukosa", "REDUKSI", "reduksi"]),
         ("EPITEL", ["EPITEL", "epitel"]),
         ("ERITROSIT", ["ERITROSIT", "eritrosit"]),
     ]
@@ -1296,7 +1301,10 @@ def read_patients_from_sheet(ws, jenis="DARAH"):
     for c in range(1, ws.max_column + 1):
         v = ws.cell(1, c).value
         if v:
-            col_map[clean_col_name(v)] = c
+            cname = clean_col_name(v)
+            col_map[cname] = c
+            if cname in ["reduksi", "glukosareduksi"]:
+                col_map["glukosa"] = c
 
     nama_col = col_map.get("nama")
     kd_col = col_map.get("kdporsi")
@@ -1324,6 +1332,8 @@ def read_patients_from_sheet(ws, jenis="DARAH"):
             if not v:
                 continue
             h = clean_col_name(v)
+            if h in ["reduksi", "glukosareduksi"]:
+                h = "glukosa"
             if c < epitel_col:
                 kimia_cols.setdefault(h, []).append(c)
             else:
@@ -1528,7 +1538,7 @@ def prepare_urin_dict(p, config, nama_pkm):
         "PH": format_cell_value(p.get("PH", "") or "", field_name="PH"),
         "LEKOSIT": to_upper_val(p.get("LEKOSIT_KIMIA") or p.get("LEKOSIT")),
         "NITRIT": to_upper_val(p.get("NITRIT")),
-        "GLUKOSA": to_upper_val(p.get("GLUKOSA")),
+        "GLUKOSA": to_upper_val(p.get("GLUKOSA") or p.get("REDUKSI")),
         "PROTEIN": to_upper_val(p.get("PROTEIN")),
         "UROBILINOGEN": to_upper_val(p.get("UROBILINOGEN")),
         "BILIRUBIN": to_upper_val(p.get("BILIRUBIN")),
@@ -1826,6 +1836,21 @@ def mode_extract(config, ref_by_no=None, ref_by_name=None, target_pkm=None):
                         k_val = str(p.get("KEJERNIHAN") or "").strip().lower()
                         if k_val in ["j", "jrnh", "jernih"]:
                             p["KEJERNIHAN"] = "JERNIH"
+
+                        # Deteksi & koreksi pergeseran kolom sedimen urin:
+                        # Jika Epitel kosong tetapi Leukosit sedimen & Eritrosit berisi angka rentang,
+                        # dan Silinder berisi angka rentang (misal "0-1", "0-2"), terjadi pergeseran ke kanan 1 kolom!
+                        ep_v = p.get("EPITEL")
+                        lk_v = p.get("LEKOSIT_SEDIMEN") or p.get("LEKOSIT1")
+                        er_v = p.get("ERITROSIT")
+                        sil_v = p.get("SILINDER")
+                        if (not is_param_filled(ep_v)) and is_param_filled(lk_v) and is_param_filled(er_v):
+                            if is_param_filled(sil_v) and any(c.isdigit() for c in str(sil_v)):
+                                p["EPITEL"] = lk_v
+                                p["LEKOSIT_SEDIMEN"] = er_v
+                                p["LEKOSIT1"] = er_v
+                                p["ERITROSIT"] = sil_v
+                                p["SILINDER"] = "NEGATIF"
 
                         # Jika pasien memiliki hasil lab urin (misal ada BJ / PH / Epitel),
                         # kolom strip yang kosong diisi nilai standar medis (Negatif / Normal)
