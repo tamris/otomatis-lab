@@ -253,16 +253,17 @@ TUGAS:
      * "Netrofil Seg": nilai dari kolom 'Neutrofil_Seg' / 'Netrofil Seg' (misal 50)
      * "Limfosit": nilai Limfosit (misal 45)
      * "Monosit": nilai Monosit (misal 3)
-   - PENTING UNTUK TABEL URIN / URINALISA:
-     * "WARNA": jika tertulis "k" atau "kuning", isi "KUNING".
-     * "KEJERNIHAN": jika tertulis "j" atau "jernih", isi "JERNIH".
+    - PENTING UNTUK TABEL URIN / URINALISA:
+     * Nilai teks harus selalu HURUF BESAR / CAPSLOCK (KUNING, JERNIH, NEGATIF, POSITIF, NORMAL).
+     * "WARNA": jika tertulis "k" atau "kuning", isi "KUNING" (CAPSLOCK).
+     * "KEJERNIHAN": jika tertulis "j" atau "jernih", isi "JERNIH" (CAPSLOCK).
      * "BERAT JENIS": jika tertulis "1015", isi "1.015" (1010 -> "1.010", 1020 -> "1.020", 1025 -> "1.025", 1005 -> "1.005").
      * "PH": nilai pH (misal 6.0 atau 6.5).
      * "EPITEL": nilai dari kolom 'Epitel' (misal "2-4", "3-5", "4-6", "5-7", "6-8").
-     * "LEKOSIT_SEDIMEN": nilai leukosit sedimen/mikroskopis (misal "0-1", "1-2", "1-3", "2-3", "2-4"). JANGAN isi "Negatif" jika ada rentang angka ini!
+     * "LEKOSIT_SEDIMEN": nilai leukosit sedimen/mikroskopis (misal "0-1", "1-2", "1-3", "2-3", "2-4"). JANGAN isi "NEGATIF" jika ada rentang angka ini!
      * "ERITROSIT": nilai eritrosit sedimen (misal "0-1", "1-2", "0-2").
-     * "PP TEST": jika ada catatan tulisan tangan atau kolom 'PP test (-)' atau 'PP test (+)' / tes kehamilan: jika strip '-' atau '(-)' isi "Negatif", jika '+' isi "Positif". Jika tidak ada catatan / kolom kosong, isi null.
-     * Untuk kolom parameter strip kimia (Protein, Glukosa, Keton, Bilirubin, Blood, Nitrit, Leukosit kimia): jika kolom tersebut kosong/putih di foto, isi "Negatif" (atau "Normal" untuk Urobilinogen).
+     * "PP TEST": jika ada catatan tulisan tangan atau kolom 'PP test (-)' atau 'PP test (+)' / tes kehamilan: jika strip '-' atau '(-)' isi "NEGATIF", jika '+' isi "POSITIF" (selalu CAPSLOCK). Jika tidak ada catatan / kolom kosong, isi null.
+     * Untuk kolom parameter strip kimia (Protein, Glukosa, Keton, Bilirubin, Blood, Nitrit, Leukosit kimia): jika kolom tersebut kosong/putih di foto, ALWAYS isi "NEGATIF" (atau "NORMAL" untuk Urobilinogen) dalam HURUF BESAR / CAPSLOCK.
    - Perhatikan jika ada catatan tulisan tangan di bagian bawah tabel (misal nama pasien tambahan, nomor, atau hasil urin khusus), sertakan juga sebagai pasien.
    - Ubah koma desimal ke titik (misal 0,8 -> 0.8 atau 5,1 -> 5.1).
    - Tulis apa adanya jika ada catatan khusus (misal "GDS=102").
@@ -419,6 +420,9 @@ def parse_val(val):
             return float(s_num)
         return int(s_num)
     except ValueError:
+        s_upper = s.upper()
+        if s_upper in ["NEGATIF", "POSITIF", "JERNIH", "KUNING", "NORMAL", "KERUH", "AGAK KERUH"]:
+            return s_upper
         return s
 
 
@@ -689,6 +693,9 @@ def format_cell_value(val, fmt="", field_name=""):
     if s == "" or s.lower() == "none":
         return ""
 
+    if s.upper() in ["NEGATIF", "POSITIF", "JERNIH", "KUNING", "NORMAL", "KERUH", "AGAK KERUH"]:
+        return s.upper()
+
     field_upper = str(field_name).upper().replace("_", " ")
 
     # 1. Khusus BERAT JENIS: selalu format 1.xxx (3 desimal)
@@ -873,6 +880,14 @@ def apply_excel_styling(wb, config=None):
                             if formatted_ph:
                                 cell.value = formatted_ph
                                 cell.number_format = '@'
+                else:
+                    # Nilai teks di sheet URIN selalu dipastikan CAPSLOCK (JERNIH, KUNING, NEGATIF, POSITIF, NORMAL, dll)
+                    for r in range(2, ws.max_row + 1):
+                        cell = ws.cell(r, c)
+                        if cell.value is not None and isinstance(cell.value, str):
+                            s_val = cell.value.strip()
+                            if s_val.upper() in ["NEGATIF", "POSITIF", "JERNIH", "KUNING", "NORMAL", "KERUH", "AGAK KERUH"]:
+                                cell.value = s_val.upper()
         elif s_name == "DARAH":
             for c in range(1, ws.max_column + 1):
                 h = ws.cell(1, c).value
@@ -1430,6 +1445,14 @@ def read_patients_from_sheet(ws, jenis="DARAH"):
             # Alias LEKOSIT sedimen untuk mailmerge template docx
             p_data["LEKOSIT1"] = p_data.get("LEKOSIT_SEDIMEN")
 
+            # Nilai teks parameter urin selalu dipastikan CAPSLOCK
+            for k in list(p_data.keys()):
+                v = p_data[k]
+                if isinstance(v, str):
+                    v_clean = v.strip()
+                    if v_clean.upper() in ["NEGATIF", "POSITIF", "JERNIH", "KUNING", "NORMAL", "KERUH", "AGAK KERUH"]:
+                        p_data[k] = v_clean.upper()
+
         patients.append(p_data)
 
     return patients
@@ -1480,6 +1503,17 @@ def prepare_darah_dict(p, config, nama_pkm):
 
 
 def prepare_urin_dict(p, config, nama_pkm):
+    def to_upper_val(val):
+        if val is None:
+            return ""
+        s = str(val).strip()
+        if s.lower() == "none":
+            return ""
+        if s.upper() in ["NEGATIF", "POSITIF", "JERNIH", "KUNING", "NORMAL", "KERUH", "AGAK KERUH"]:
+            return s.upper()
+        return s
+
+    pp_val = p.get("PP TEST") or p.get("PP_TEST") or ""
     return {
         "NAMA": str(p.get("NAMA", "") or ""),
         "umur": format_cell_value(p.get("UMUR", ""), field_name="UMUR"),
@@ -1487,26 +1521,26 @@ def prepare_urin_dict(p, config, nama_pkm):
         "PUSKESMAS": str(p.get("PUSKESMAS") or nama_pkm or ""),
         "TANGGAL_EXAM": str((config.get("TANGGAL_EXAM") if config else None) or p.get("TANGGAL_EXAM", "")),
         "TANGGAL_SURAT": str((config.get("TANGGAL_SURAT") if config else None) or p.get("TANGGAL_SURAT", "")),
-        "WARNA": str(p.get("WARNA", "") or ""),
-        "KEJERNIHAN": str(p.get("KEJERNIHAN", "") or ""),
-        "DARAH": str(p.get("DARAH", "") or ""),
+        "WARNA": to_upper_val(p.get("WARNA")),
+        "KEJERNIHAN": to_upper_val(p.get("KEJERNIHAN")),
+        "DARAH": to_upper_val(p.get("DARAH")),
         "BERAT_JENIS": format_cell_value(p.get("BERAT JENIS") or p.get("BERAT_JENIS") or "", field_name="BERAT_JENIS"),
         "PH": format_cell_value(p.get("PH", "") or "", field_name="PH"),
-        "LEKOSIT": str(p.get("LEKOSIT_KIMIA") or p.get("LEKOSIT") or ""),
-        "NITRIT": str(p.get("NITRIT", "") or ""),
-        "GLUKOSA": str(p.get("GLUKOSA", "") or ""),
-        "PROTEIN": str(p.get("PROTEIN", "") or ""),
-        "UROBILINOGEN": str(p.get("UROBILINOGEN", "") or ""),
-        "BILIRUBIN": str(p.get("BILIRUBIN", "") or ""),
-        "BLOOD": str(p.get("BLOOD", "") or ""),
-        "KETON": str(p.get("KETON", "") or ""),
-        "EPITEL": str(p.get("EPITEL", "") or ""),
-        "LEKOSIT1": str(p.get("LEKOSIT_SEDIMEN") or p.get("LEKOSIT1") or ""),
-        "ERITROSIT": str(p.get("ERITROSIT", "") or ""),
-        "KRISTAL": str(p.get("KRISTAL", "") or ""),
-        "BAKTERI": str(p.get("BAKTERI", "") or ""),
-        "PP_TEST": str(p.get("PP TEST") or p.get("PP_TEST") or ""),
-        "PP TEST": str(p.get("PP TEST") or p.get("PP_TEST") or ""),
+        "LEKOSIT": to_upper_val(p.get("LEKOSIT_KIMIA") or p.get("LEKOSIT")),
+        "NITRIT": to_upper_val(p.get("NITRIT")),
+        "GLUKOSA": to_upper_val(p.get("GLUKOSA")),
+        "PROTEIN": to_upper_val(p.get("PROTEIN")),
+        "UROBILINOGEN": to_upper_val(p.get("UROBILINOGEN")),
+        "BILIRUBIN": to_upper_val(p.get("BILIRUBIN")),
+        "BLOOD": to_upper_val(p.get("BLOOD")),
+        "KETON": to_upper_val(p.get("KETON")),
+        "EPITEL": to_upper_val(p.get("EPITEL")),
+        "LEKOSIT1": to_upper_val(p.get("LEKOSIT_SEDIMEN") or p.get("LEKOSIT1")),
+        "ERITROSIT": to_upper_val(p.get("ERITROSIT")),
+        "KRISTAL": to_upper_val(p.get("KRISTAL")),
+        "BAKTERI": to_upper_val(p.get("BAKTERI")),
+        "PP_TEST": to_upper_val(pp_val),
+        "PP TEST": to_upper_val(pp_val),
     }
 
 
@@ -1798,21 +1832,29 @@ def mode_extract(config, ref_by_no=None, ref_by_name=None, target_pkm=None):
                         has_urin_result = any(is_param_filled(p.get(k)) for k in ["BERAT JENIS", "BERAT_JENIS", "PH", "EPITEL", "LEKOSIT_SEDIMEN", "ERITROSIT"])
                         if has_urin_result:
                             default_neg = [
-                                ("PROTEIN", "Negatif"),
-                                ("GLUKOSA", "Negatif"),
-                                ("NITRIT", "Negatif"),
-                                ("KETON", "Negatif"),
-                                ("BILIRUBIN", "Negatif"),
-                                ("BLOOD", "Negatif"),
-                                ("UROBILINOGEN", "Normal"),
-                                ("LEKOSIT_KIMIA", "Negatif"),
-                                ("SILINDER", "Negatif"),
-                                ("KRISTAL", "Negatif"),
-                                ("BAKTERI", "Negatif"),
+                                ("PROTEIN", "NEGATIF"),
+                                ("GLUKOSA", "NEGATIF"),
+                                ("NITRIT", "NEGATIF"),
+                                ("KETON", "NEGATIF"),
+                                ("BILIRUBIN", "NEGATIF"),
+                                ("BLOOD", "NEGATIF"),
+                                ("UROBILINOGEN", "NORMAL"),
+                                ("LEKOSIT_KIMIA", "NEGATIF"),
+                                ("SILINDER", "NEGATIF"),
+                                ("KRISTAL", "NEGATIF"),
+                                ("BAKTERI", "NEGATIF"),
                             ]
                             for k, def_v in default_neg:
                                 if not is_param_filled(p.get(k)):
                                     p[k] = def_v
+
+                        # Pastikan seluruh nilai teks parameter urin selalu CAPSLOCK
+                        for k in list(p.keys()):
+                            v = p[k]
+                            if isinstance(v, str):
+                                v_clean = v.strip()
+                                if v_clean.upper() in ["NEGATIF", "POSITIF", "JERNIH", "KUNING", "NORMAL", "KERUH", "AGAK KERUH"]:
+                                    p[k] = v_clean.upper()
 
                     valid_in_photo.append(p)
                     status_ket = " [nilai kosong]" if not has_val else ""
