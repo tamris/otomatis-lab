@@ -136,12 +136,79 @@ def load_docx_template_safe(file_path):
                             tc.remove(p_elem)
                         clean_xml = (
                             '<w:p xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
-                            '  <w:pPr><w:jc w:val="center"/><w:rPr><w:rFonts w:ascii="Arial" w:hAnsi="Arial"/><w:b/><w:sz w:val="19"/><w:szCs w:val="19"/></w:rPr></w:pPr>'
-                            '  <w:r><w:fldChar w:fldCharType="begin"/></w:r>'
-                            '  <w:r><w:instrText xml:space="preserve"> MERGEFIELD PP_TEST </w:instrText></w:r>'
-                            '  <w:r><w:fldChar w:fldCharType="separate"/></w:r>'
-                            '  <w:r><w:t>«PP_TEST»</w:t></w:r>'
-                            '  <w:r><w:fldChar w:fldCharType="end"/></w:r>'
+                            '  <w:pPr>'
+                            '    <w:ind w:left="-126"/>'
+                            '    <w:jc w:val="center"/>'
+                            '    <w:rPr>'
+                            '      <w:rFonts w:ascii="Arial" w:eastAsia="Times New Roman" w:hAnsi="Arial" w:cs="Arial"/>'
+                            '      <w:b/>'
+                            '      <w:bCs/>'
+                            '      <w:noProof/>'
+                            '      <w:color w:val="000000"/>'
+                            '      <w:sz w:val="19"/>'
+                            '      <w:szCs w:val="19"/>'
+                            '    </w:rPr>'
+                            '  </w:pPr>'
+                            '  <w:r>'
+                            '    <w:rPr>'
+                            '      <w:rFonts w:ascii="Arial" w:eastAsia="Times New Roman" w:hAnsi="Arial" w:cs="Arial"/>'
+                            '      <w:b/>'
+                            '      <w:bCs/>'
+                            '      <w:noProof/>'
+                            '      <w:color w:val="000000"/>'
+                            '      <w:sz w:val="19"/>'
+                            '      <w:szCs w:val="19"/>'
+                            '    </w:rPr>'
+                            '    <w:fldChar w:fldCharType="begin"/>'
+                            '  </w:r>'
+                            '  <w:r>'
+                            '    <w:rPr>'
+                            '      <w:rFonts w:ascii="Arial" w:eastAsia="Times New Roman" w:hAnsi="Arial" w:cs="Arial"/>'
+                            '      <w:b/>'
+                            '      <w:bCs/>'
+                            '      <w:noProof/>'
+                            '      <w:color w:val="000000"/>'
+                            '      <w:sz w:val="19"/>'
+                            '      <w:szCs w:val="19"/>'
+                            '    </w:rPr>'
+                            '    <w:instrText xml:space="preserve"> MERGEFIELD PP_TEST </w:instrText>'
+                            '  </w:r>'
+                            '  <w:r>'
+                            '    <w:rPr>'
+                            '      <w:rFonts w:ascii="Arial" w:eastAsia="Times New Roman" w:hAnsi="Arial" w:cs="Arial"/>'
+                            '      <w:b/>'
+                            '      <w:bCs/>'
+                            '      <w:noProof/>'
+                            '      <w:color w:val="000000"/>'
+                            '      <w:sz w:val="19"/>'
+                            '      <w:szCs w:val="19"/>'
+                            '    </w:rPr>'
+                            '    <w:fldChar w:fldCharType="separate"/>'
+                            '  </w:r>'
+                            '  <w:r>'
+                            '    <w:rPr>'
+                            '      <w:rFonts w:ascii="Arial" w:eastAsia="Times New Roman" w:hAnsi="Arial" w:cs="Arial"/>'
+                            '      <w:b/>'
+                            '      <w:bCs/>'
+                            '      <w:noProof/>'
+                            '      <w:color w:val="000000"/>'
+                            '      <w:sz w:val="19"/>'
+                            '      <w:szCs w:val="19"/>'
+                            '    </w:rPr>'
+                            '    <w:t>«PP_TEST»</w:t>'
+                            '  </w:r>'
+                            '  <w:r>'
+                            '    <w:rPr>'
+                            '      <w:rFonts w:ascii="Arial" w:eastAsia="Times New Roman" w:hAnsi="Arial" w:cs="Arial"/>'
+                            '      <w:b/>'
+                            '      <w:bCs/>'
+                            '      <w:noProof/>'
+                            '      <w:color w:val="000000"/>'
+                            '      <w:sz w:val="19"/>'
+                            '      <w:szCs w:val="19"/>'
+                            '    </w:rPr>'
+                            '    <w:fldChar w:fldCharType="end"/>'
+                            '  </w:r>'
                             '</w:p>'
                         )
                         tc.append(parse_xml(clean_xml))
@@ -2087,7 +2154,7 @@ def mode_generate(config, word_app=None, target_pkm=None, force=False):
                     mm.merge_templates(urin_dicts, separator="page_break")
                     mm.write(str(out_urin_docx))
 
-                # Post-processing: Hapus baris PP Test jika pasien tidak memiliki hasil PP Test
+                # Post-processing: Format PP Test (Hapus jika kosong, pastikan BOLD & sejajar jika ada)
                 doc_urin = docx.Document(str(out_urin_docx))
                 for idx, t in enumerate(doc_urin.tables):
                     if idx < len(valid_urin):
@@ -2100,6 +2167,25 @@ def mode_generate(config, word_app=None, target_pkm=None, force=False):
                                     tr = r._tr
                                     tr.getparent().remove(tr)
                                     break
+                        else:
+                            for r in t.rows:
+                                if any("PP Test" in c.text or "PP TEST" in c.text for c in r.cells):
+                                    if len(r.cells) > 2:
+                                        c_hasil = r.cells[2]
+                                        for p_elem in c_hasil.paragraphs:
+                                            pPr = p_elem._p.get_or_add_pPr()
+                                            ind = pPr.find("{http://schemas.openxmlformats.org/wordprocessingml/2006/main}ind")
+                                            if ind is None:
+                                                pPr.append(parse_xml('<w:ind xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" w:left="-126"/>'))
+                                            else:
+                                                ind.set("{http://schemas.openxmlformats.org/wordprocessingml/2006/main}left", "-126")
+                                            jc = pPr.find("{http://schemas.openxmlformats.org/wordprocessingml/2006/main}jc")
+                                            if jc is None:
+                                                pPr.append(parse_xml('<w:jc xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" w:val="center"/>'))
+                                            else:
+                                                jc.set("{http://schemas.openxmlformats.org/wordprocessingml/2006/main}val", "center")
+                                            for run in p_elem.runs:
+                                                run.bold = True
                 doc_urin.save(str(out_urin_docx))
 
                 convert_single_docx_to_pdf_fast(word_app, out_urin_docx, out_urin_pdf)
