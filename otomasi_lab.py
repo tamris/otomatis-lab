@@ -765,6 +765,10 @@ def format_cell_value(val, fmt="", field_name=""):
     if s.upper() in ["NEGATIF", "POSITIF", "JERNIH", "KUNING", "NORMAL", "KERUH", "AGAK KERUH"]:
         return s.upper()
 
+    # Format rentang angka sedimen urin agar rapi tidak mepet (misal '7-10' -> '7 - 10')
+    if re.match(r'^\d+\s*[-–—]\s*\d+$', s):
+        return re.sub(r'(\d+)\s*[-–—]\s*(\d+)', r'\1 - \2', s)
+
     field_upper = str(field_name).upper().replace("_", " ")
 
     # 1. Khusus BERAT JENIS: selalu format 1.xxx (3 desimal)
@@ -1588,6 +1592,9 @@ def prepare_urin_dict(p, config, nama_pkm):
             return ""
         if s.upper() in ["NEGATIF", "POSITIF", "JERNIH", "KUNING", "NORMAL", "KERUH", "AGAK KERUH"]:
             return s.upper()
+        # Jika nilai berupa rentang angka (misal "7-10", "1-2", "0-1"), beri spasi rapi agar tidak mepet ("7 - 10")
+        if re.match(r'^\d+\s*[-–—]\s*\d+$', s):
+            return re.sub(r'(\d+)\s*[-–—]\s*(\d+)', r'\1 - \2', s)
         return s
 
     pp_val = p.get("PP TEST") or p.get("PP_TEST") or ""
