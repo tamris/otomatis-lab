@@ -1961,8 +1961,19 @@ def mode_generate(config, word_app=None, target_pkm=None, force=False):
         nama_pkm = pkm_out_dir.name
         rekap_file = pkm_out_dir / f"Rekap_{nama_pkm}.xlsx"
         if not rekap_file.exists():
-            print(f" [WARN] File '{rekap_file.name}' tidak ditemukan di '{nama_pkm}'. Dilewati.", flush=True)
-            continue
+            alt_rekap = pkm_out_dir / "Rekap.xlsx"
+            if alt_rekap.exists():
+                rekap_file = alt_rekap
+            else:
+                xlsx_candidates = [
+                    f for f in pkm_out_dir.glob("*.xlsx")
+                    if not f.name.startswith("~$") and "template" not in f.name.lower()
+                ]
+                if xlsx_candidates:
+                    rekap_file = xlsx_candidates[0]
+                else:
+                    print(f" [WARN] File Rekap Excel tidak ditemukan di '{nama_pkm}'. Dilewati.", flush=True)
+                    continue
 
         # File output All-in-One
         out_darah_docx = pkm_out_dir / f"All_Hasil_Darah_{nama_pkm}.docx"
