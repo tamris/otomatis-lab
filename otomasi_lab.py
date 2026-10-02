@@ -57,6 +57,20 @@ def load_config(config_path=BASE_DIR / "config.txt"):
     return cfg
 
 
+def save_config(config, config_path=BASE_DIR / "config.txt"):
+    """Menyimpan konfigurasi terbaru (TANGGAL_EXAM, TANGGAL_SURAT) ke config.txt."""
+    try:
+        lines = []
+        if "TANGGAL_EXAM" in config and config["TANGGAL_EXAM"]:
+            lines.append(f"TANGGAL_EXAM = {config['TANGGAL_EXAM']}\n")
+        if "TANGGAL_SURAT" in config and config["TANGGAL_SURAT"]:
+            lines.append(f"TANGGAL_SURAT = {config['TANGGAL_SURAT']}\n")
+        with open(config_path, "w", encoding="utf-8") as f:
+            f.writelines(lines)
+    except Exception as e:
+        print(f" [WARN] Gagal memperbarui config.txt: {e}", flush=True)
+
+
 def load_workbook_safe(file_path, data_only=True):
     """
     Membaca file Excel secara aman, bahkan jika file sedang dibuka di Microsoft Excel.
@@ -895,9 +909,10 @@ def apply_excel_styling(wb, config=None):
                 no_val = ws.cell(r, 1).value
                 nama_val = ws.cell(r, 2).value
                 if no_val is not None or nama_val is not None:
-                    if cfg_exam and tgl_exam_col:
+                    # HANYA isi dari config jika cell di Excel masih KOSONG (prioritaskan data tanggal dari Excel)
+                    if cfg_exam and tgl_exam_col and not is_param_filled(ws.cell(r, tgl_exam_col).value):
                         ws.cell(r, tgl_exam_col).value = cfg_exam
-                    if cfg_surat and tgl_surat_col:
+                    if cfg_surat and tgl_surat_col and not is_param_filled(ws.cell(r, tgl_surat_col).value):
                         ws.cell(r, tgl_surat_col).value = cfg_surat
 
         # 1. Otomatis urutkan baris berdasarkan NO (1, 2, 3, ...)
@@ -1247,16 +1262,9 @@ def update_rekap_excel(rekap_path, template_source, jenis, patients, config, nam
                 if not cur_n or cur_n in ["SIGNOYO", "MANNEE", "PARSENI", "DARSENI"]:
                     safe_set(nama_c, p.get("NAMA"))
             if p.get("UMUR"): update_if_empty(col_map.get("umur"), p.get("UMUR"))
-            if p.get("KD_PORSI"): update_if_empty(col_map.get("kdporsi"), p.get("KD_PORSI"))
-            if config.get("TANGGAL_EXAM"):
-                safe_set(col_map.get("tanggalexam"), config.get("TANGGAL_EXAM"))
-            else:
-                update_if_empty(col_map.get("tanggalexam"), p.get("TANGGAL_EXAM"))
+            update_if_empty(col_map.get("tanggalexam"), p.get("TANGGAL_EXAM") or config.get("TANGGAL_EXAM"))
             update_if_empty(col_map.get("puskesmas"), nama_pkm)
-            if config.get("TANGGAL_SURAT"):
-                safe_set(col_map.get("tanggalsurat"), config.get("TANGGAL_SURAT"))
-            else:
-                update_if_empty(col_map.get("tanggalsurat"), p.get("TANGGAL_SURAT"))
+            update_if_empty(col_map.get("tanggalsurat"), p.get("TANGGAL_SURAT") or config.get("TANGGAL_SURAT"))
 
         # Pengisian kolom parameter lab
         for p_key, p_val in p.items():
@@ -1553,8 +1561,8 @@ def prepare_darah_dict(p, config, nama_pkm):
         "UMUR": format_cell_value(p.get("UMUR", ""), field_name="UMUR"),
         "KD_PORSI": format_cell_value(p.get("KD_PORSI", ""), field_name="KD_PORSI"),
         "PUSKESMAS": str(p.get("PUSKESMAS") or nama_pkm or ""),
-        "TANGGAL_EXAM": str((config.get("TANGGAL_EXAM") if config else None) or p.get("TANGGAL_EXAM", "")),
-        "TANGGAL_SURAT": str((config.get("TANGGAL_SURAT") if config else None) or p.get("TANGGAL_SURAT", "")),
+        "TANGGAL_EXAM": str(p.get("TANGGAL_EXAM") or (config.get("TANGGAL_EXAM") if config else "") or ""),
+        "TANGGAL_SURAT": str(p.get("TANGGAL_SURAT") or (config.get("TANGGAL_SURAT") if config else "") or ""),
         "Hemoglobin": format_cell_value(p.get("Hemoglobin", ""), field_name="Hemoglobin"),
         "Lekosit": format_cell_value(p.get("Lekosit", ""), field_name="Lekosit"),
         "Eritrosit": format_cell_value(p.get("Eritrosit", ""), field_name="Eritrosit"),
@@ -1603,8 +1611,8 @@ def prepare_urin_dict(p, config, nama_pkm):
         "umur": format_cell_value(p.get("UMUR", ""), field_name="UMUR"),
         "KD_PORSI": format_cell_value(p.get("KD_PORSI", ""), field_name="KD_PORSI"),
         "PUSKESMAS": str(p.get("PUSKESMAS") or nama_pkm or ""),
-        "TANGGAL_EXAM": str((config.get("TANGGAL_EXAM") if config else None) or p.get("TANGGAL_EXAM", "")),
-        "TANGGAL_SURAT": str((config.get("TANGGAL_SURAT") if config else None) or p.get("TANGGAL_SURAT", "")),
+        "TANGGAL_EXAM": str(p.get("TANGGAL_EXAM") or (config.get("TANGGAL_EXAM") if config else "") or ""),
+        "TANGGAL_SURAT": str(p.get("TANGGAL_SURAT") or (config.get("TANGGAL_SURAT") if config else "") or ""),
         "WARNA": to_upper_val(p.get("WARNA")),
         "KEJERNIHAN": to_upper_val(p.get("KEJERNIHAN")),
         "DARAH": to_upper_val(p.get("DARAH")),
@@ -2214,9 +2222,17 @@ def main():
     parser.add_argument("--generate", action="store_true", help="Mode Cetak: Validasi kelengkapan data Excel & cetak All-in-One Word + PDF")
     parser.add_argument("--force", action="store_true", help="Paksa cetak ulang seluruh dokumen meskipun file hasil cetak sudah ada")
     parser.add_argument("--pkm", type=str, default=None, help="Target nama Puskesmas tertentu (contoh: --pkm 'BOJONG' atau --pkm 'BALAPULANG')")
+    parser.add_argument("--tgl-exam", type=str, default=None, help="Tanggal Pemeriksaan (misal: '1 OKTOBER 2026')")
+    parser.add_argument("--tgl-surat", type=str, default=None, help="Tanggal Surat (misal: '3 OKTOBER 2026')")
     args = parser.parse_args()
 
     config = load_config()
+    if args.tgl_exam:
+        config["TANGGAL_EXAM"] = args.tgl_exam.strip()
+    if args.tgl_surat:
+        config["TANGGAL_SURAT"] = args.tgl_surat.strip()
+    if args.tgl_exam or args.tgl_surat:
+        save_config(config)
     print("=" * 60, flush=True)
     print("   SISTEM OTOMASI HASIL LABORATORIUM KLINIS PER PUSKESMAS", flush=True)
     print("=" * 60, flush=True)
