@@ -766,7 +766,7 @@ def format_cell_value(val, fmt="", field_name=""):
     - PH, Hemoglobin, Lekosit, Creatinine, HbA1c, Hematokrit, MCV, MCH, MCHC:
       Selalu mempertahankan 1 angka desimal (misal 7 atau 7.0 -> '7.0', 4 -> '4.0', 1 -> '1.0').
     - Eritrosit:
-      Selalu mempertahankan 2 angka desimal (misal 4 -> '4.00', 4.5 -> '4.50', 4.19 -> '4.19').
+      Format maksimal 2 desimal, namun jika angka di belakangnya 0 cukup 1 desimal (misal 4, 4.0, atau 4.00 -> '4.0', 4.10 -> '4.1', 3.76 -> '3.76').
     - KD_PORSI, NO, UMUR:
       Membersihkan akhiran '.0' jika ada (misal '1100622882.0' -> '1100622882').
     """
@@ -808,12 +808,15 @@ def format_cell_value(val, fmt="", field_name=""):
     if field_upper in ["LEKOSIT_SEDIMEN", "LEKOSIT1", "EPITEL"]:
         return s
 
-    # 3. Parameter dengan 2 angka desimal (Eritrosit)
+    # 3. Parameter Eritrosit: maksimal 2 desimal, jika berakhiran 0 cukup 1 desimal (misal 4, 4.0, atau 4.00 -> '4.0', 4.10 -> '4.1', 3.76 -> '3.76')
     if "ERITROSIT" in field_upper and ("DARAH" in field_upper or field_name == "Eritrosit"):
         s_clean = s.replace(",", ".")
         try:
             f = float(s_clean)
-            return f"{f:.2f}"
+            res = f"{f:.2f}"
+            if res.endswith("0"):
+                res = res[:-1]
+            return res
         except ValueError:
             return s
 
@@ -851,13 +854,16 @@ def format_cell_value(val, fmt="", field_name=""):
         except ValueError:
             return s
 
-    # 5. Format sesuai format Excel jika cell.number_format memuat .00 atau .0
+    # 6. Format sesuai format Excel jika cell.number_format memuat .00 atau .0
     if fmt:
         if ".00" in fmt:
             s_clean = s.replace(",", ".")
             try:
                 f = float(s_clean)
-                return f"{f:.2f}"
+                res = f"{f:.2f}"
+                if res.endswith("0"):
+                    res = res[:-1]
+                return res
             except ValueError:
                 pass
         elif ".0" in fmt:
@@ -867,6 +873,10 @@ def format_cell_value(val, fmt="", field_name=""):
                 return f"{f:.1f}"
             except ValueError:
                 pass
+
+    # Sederhanakan angka berakhiran .00 menjadi .0 (misal '4.00' -> '4.0')
+    if s.endswith(".00") or s.endswith(",00"):
+        return s[:-1]
 
     return s
 
