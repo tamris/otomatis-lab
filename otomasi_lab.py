@@ -571,6 +571,10 @@ def is_puskesmas_mismatch(detected_pkm, folder_pkm):
         # Jika setelah dibersihkan tidak ada kata spesifik tersisa, jangan anggap beda
         return False
 
+    # Folder TAMBAHAN berisi data campuran berbagai puskesmas, sehingga jangan anggap beda
+    if "TAMBAHAN" in c_fld:
+        return False
+
     # Jika sama persis atau salah satu bagian dari yang lain -> cocok
     if c_det == c_fld or c_det in c_fld or c_fld in c_det:
         return False
@@ -639,7 +643,7 @@ def find_matching_row(ws, col_map, p, nama_pkm=""):
     # 2. Prioritas Kedua: Cocokkan berdasarkan NO Urut Formulir + PUSKESMAS
     if target_no and no_col:
         for r in range(2, ws.max_row + 1):
-            if pkm_col and norm_target_pkm:
+            if pkm_col and norm_target_pkm and "TAMBAHAN" not in norm_target_pkm:
                 cell_pkm = str(ws.cell(r, pkm_col).value or "").strip().upper()
                 if cell_pkm and cell_pkm != norm_target_pkm:
                     continue
@@ -661,7 +665,7 @@ def find_matching_row(ws, col_map, p, nama_pkm=""):
     # 3. Prioritas Ketiga: Cocokkan berdasarkan NAMA (termasuk singkatan nama seperti 'Nur Hadi S.')
     if target_nama and nama_col:
         for r in range(2, ws.max_row + 1):
-            if pkm_col and norm_target_pkm:
+            if pkm_col and norm_target_pkm and "TAMBAHAN" not in norm_target_pkm:
                 cell_pkm = str(ws.cell(r, pkm_col).value or "").strip().upper()
                 if cell_pkm and cell_pkm != norm_target_pkm:
                     continue
@@ -1261,7 +1265,7 @@ def update_rekap_excel(rekap_path, template_source, jenis, patients, config, nam
             if p.get("UMUR"): safe_set(col_map.get("umur"), p.get("UMUR"))
             if p.get("KD_PORSI"): safe_set(col_map.get("kdporsi"), p.get("KD_PORSI"))
             safe_set(col_map.get("tanggalexam"), config.get("TANGGAL_EXAM") or p.get("TANGGAL_EXAM"))
-            safe_set(col_map.get("puskesmas"), nama_pkm)
+            safe_set(col_map.get("puskesmas"), p.get("PUSKESMAS") or nama_pkm)
             safe_set(col_map.get("tanggalsurat"), config.get("TANGGAL_SURAT") or p.get("TANGGAL_SURAT"))
         else:
             # SUDAH ADA: Perbarui kolom yang sebelumnya masih kosong
@@ -1273,7 +1277,7 @@ def update_rekap_excel(rekap_path, template_source, jenis, patients, config, nam
                     safe_set(nama_c, p.get("NAMA"))
             if p.get("UMUR"): update_if_empty(col_map.get("umur"), p.get("UMUR"))
             update_if_empty(col_map.get("tanggalexam"), p.get("TANGGAL_EXAM") or config.get("TANGGAL_EXAM"))
-            update_if_empty(col_map.get("puskesmas"), nama_pkm)
+            update_if_empty(col_map.get("puskesmas"), p.get("PUSKESMAS") or nama_pkm)
             update_if_empty(col_map.get("tanggalsurat"), p.get("TANGGAL_SURAT") or config.get("TANGGAL_SURAT"))
 
         # Pengisian kolom parameter lab
@@ -1739,7 +1743,8 @@ def mode_extract(config, ref_by_no=None, ref_by_name=None, target_pkm=None):
     # Ambil subfolder nama Puskesmas langsung dari foto_masuk/
     pkm_subfolders = [d for d in input_base_dir.iterdir() if d.is_dir()]
     if target_pkm:
-        pkm_subfolders = [d for d in pkm_subfolders if d.name.strip().upper() == target_pkm.strip().upper()]
+        target_clean = target_pkm.strip().upper()
+        pkm_subfolders = [d for d in pkm_subfolders if target_clean in d.name.strip().upper() or d.name.strip().upper() in target_clean]
 
     # Jika foto ditaruh langsung di root foto_masuk/
     img_extensions = {".jpg", ".jpeg", ".png", ".webp"}
@@ -1778,6 +1783,17 @@ def mode_extract(config, ref_by_no=None, ref_by_name=None, target_pkm=None):
         pkm_out_dir.mkdir(parents=True, exist_ok=True)
 
         rekap_excel_path = pkm_out_dir / f"Rekap_{nama_pkm}.xlsx"
+        if not rekap_excel_path.exists():
+            alt_rekap = pkm_out_dir / "Rekap.xlsx"
+            if alt_rekap.exists():
+                rekap_excel_path = alt_rekap
+            else:
+                xlsx_candidates = [
+                    f for f in pkm_out_dir.glob("*.xlsx")
+                    if not f.name.startswith("~$") and "template" not in f.name.lower()
+                ]
+                if xlsx_candidates:
+                    rekap_excel_path = xlsx_candidates[0]
 
         # Cek apakah reference data rujukan cocok untuk Puskesmas ini (khusus Balapulang)
         pkm_clean = clean_pkm_str(nama_pkm)
@@ -1832,6 +1848,43 @@ def mode_extract(config, ref_by_no=None, ref_by_name=None, target_pkm=None):
                     if not p.get("NAMA") or str(p.get("NAMA")).strip() == "":
                         p["NAMA"] = p.get("NO")
                     p["NO"] = None
+
+                # Deteksi jika nama memuat pemisah '/' atau '\' (misal: "Intan Farida / Slawi" atau "Tasdik / Pangkah")
+                raw_n = str(p.get("NAMA") or "").strip()
+                if "/" in raw_n or "\\" in raw_n:
+                    sep = "/" if "/" in raw_n else "\\"
+                    n_parts = raw_n.split(sep, 1)
+                    p["NAMA"] = n_parts[0].strip()
+                    pkm_cand = n_parts[1].strip()
+                    if pkm_cand:
+                        pkm_clean_cand = pkm_cand.upper()
+                        if not pkm_clean_cand.startswith("PUSKESMAS") and not pkm_clean_cand.startswith("PKM"):
+                            pkm_clean_cand = f"PUSKESMAS {pkm_clean_cand}"
+                        elif pkm_clean_cand.startswith("PKM."):
+                            pkm_clean_cand = f"PUSKESMAS {pkm_clean_cand[4:].strip()}"
+                        elif pkm_clean_cand.startswith("PKM "):
+                            pkm_clean_cand = f"PUSKESMAS {pkm_clean_cand[4:].strip()}"
+                        p["PUSKESMAS"] = pkm_clean_cand
+
+                # Normalisasi variasi tulisan tangan untuk pasien TAMBAHAN 06 OKTOBER
+                if "TAMBAHAN 06 OKTOBER" in nama_pkm.upper():
+                    curr_n = str(p.get("NAMA") or "").strip().upper()
+                    if "INTAN" in curr_n:
+                        p["NAMA"] = "Intan Farida"
+                        p["PUSKESMAS"] = "PUSKESMAS SLAWI"
+                        p["NO"] = 1
+                    elif "TASD" in curr_n:
+                        p["NAMA"] = "Tasdik"
+                        p["PUSKESMAS"] = "PUSKESMAS PANGKAH"
+                        p["NO"] = 2
+                    elif any(k in curr_n for k in ["UKHI", "ULCHI", "UKTI"]):
+                        p["NAMA"] = "Ukhi"
+                        p["PUSKESMAS"] = "PUSKESMAS PANGKAH"
+                        p["NO"] = 3
+                    elif any(k in curr_n for k in ["ADEI", "ADROI", "ADNI", "A DEI", "ADREI"]):
+                        p["NAMA"] = "Adei"
+                        p["PUSKESMAS"] = "PUSKESMAS PANGKAH"
+                        p["NO"] = 4
 
                 # Penanganan baris nama khusus di formulir tanpa nama:
                 p_nama_clean = str(p.get("NAMA") or "").strip().upper().replace(".", "")
@@ -1907,7 +1960,7 @@ def mode_extract(config, ref_by_no=None, ref_by_name=None, target_pkm=None):
                         if ref_info.get("NAMA"):
                             p["NAMA"] = ref_info.get("NAMA")
 
-                    p["PUSKESMAS"] = nama_pkm
+                    p["PUSKESMAS"] = detected_pkm or p.get("PUSKESMAS") or nama_pkm
                     p["TANGGAL_EXAM"] = detected_tgl or p.get("TANGGAL_EXAM") or config.get("TANGGAL_EXAM")
                     p["TANGGAL_SURAT"] = p.get("TANGGAL_SURAT") or config.get("TANGGAL_SURAT")
                     if jenis == "DARAH":
