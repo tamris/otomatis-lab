@@ -900,7 +900,7 @@ def apply_excel_styling(wb, config=None):
     cfg_exam = config.get("TANGGAL_EXAM") if config else None
     cfg_surat = config.get("TANGGAL_SURAT") if config else None
 
-    for s_name in ["DARAH", "URIN"]:
+    for s_name in ["DARAH", "URIN", "URINE"]:
         if s_name not in wb.sheetnames:
             continue
         ws = wb[s_name]
@@ -960,7 +960,7 @@ def apply_excel_styling(wb, config=None):
                         cell.fill = NO_FILL
 
         # 4. Standardisasi format kolom desimal di Excel (BJ '1.xxx', PH 'x.x', HBA1C 'x.x', Eritrosit 'x.xx', dll)
-        if s_name == "URIN":
+        if s_name in ["URIN", "URINE"]:
             for c in range(1, ws.max_column + 1):
                 h = ws.cell(1, c).value
                 if not h:
@@ -1402,6 +1402,8 @@ def read_patients_from_sheet(ws, jenis="DARAH"):
     nama_col = col_map.get("nama")
     kd_col = col_map.get("kdporsi")
     no_col = col_map.get("no")
+    if not no_col and (col_map.get("a") == 1 or col_map.get("no.") or col_map.get("nomor")):
+        no_col = col_map.get("no.") or col_map.get("nomor") or 1
     umur_col = col_map.get("umur")
     tgl_exam_col = col_map.get("tanggalexam")
     pkm_col = col_map.get("puskesmas")
@@ -1680,7 +1682,7 @@ def create_patient_folders_from_excel(rekap_excel_path, pkm_out_dir, nama_pkm):
     """
     wb = load_workbook_safe(rekap_excel_path, data_only=True)
     ws_darah = wb["DARAH"] if "DARAH" in wb.sheetnames else None
-    ws_urin = wb["URIN"] if "URIN" in wb.sheetnames else None
+    ws_urin = wb["URIN"] if "URIN" in wb.sheetnames else (wb["URINE"] if "URINE" in wb.sheetnames else None)
 
     all_darah = read_patients_from_sheet(ws_darah, jenis="DARAH") if ws_darah else []
     all_urin = read_patients_from_sheet(ws_urin, jenis="URIN") if ws_urin else []
@@ -2178,7 +2180,7 @@ def mode_generate(config, word_app=None, target_pkm=None, force=False):
             continue
 
         ws_darah = wb["DARAH"] if "DARAH" in wb.sheetnames else None
-        ws_urin = wb["URIN"] if "URIN" in wb.sheetnames else None
+        ws_urin = wb["URIN"] if "URIN" in wb.sheetnames else (wb["URINE"] if "URINE" in wb.sheetnames else None)
 
         darah_list = read_patients_from_sheet(ws_darah, jenis="DARAH") if ws_darah else []
         urin_list = read_patients_from_sheet(ws_urin, jenis="URIN") if ws_urin else []
