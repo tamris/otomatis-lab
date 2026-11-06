@@ -537,6 +537,12 @@ def clean_pkm_str(s):
     return s.strip()
 
 
+BULAN_NAMA = [
+    "", "JANUARI", "FEBRUARI", "MARET", "APRIL", "MEI", "JUNI",
+    "JULI", "AGUSTUS", "SEPTEMBER", "OKTOBER", "NOVEMBER", "DESEMBER"
+]
+
+
 def format_indo_date(date_str):
     if not date_str:
         return None
@@ -546,13 +552,48 @@ def format_indo_date(date_str):
         d, mo, y = int(m.group(1)), int(m.group(2)), int(m.group(3))
         if y < 100:
             y += 2000
-        bulan_nama = [
-            "", "JANUARI", "FEBRUARI", "MARET", "APRIL", "MEI", "JUNI",
-            "JULI", "AGUSTUS", "SEPTEMBER", "OKTOBER", "NOVEMBER", "DESEMBER"
-        ]
         if 1 <= mo <= 12:
-            return f"{d} {bulan_nama[mo]} {y}"
+            return f"{d} {BULAN_NAMA[mo]} {y}"
     return s.upper()
+
+
+def extract_day_month(text):
+    """
+    Ekstrak (hari, bulan) dari string tanggal atau nama folder.
+    Mendukung format '05 NOVEMBER', '5 NOVEMBER 2026', '6-11-2026', dll.
+    Mengembalikan tuple (day, month_num) atau None jika tidak terdeteksi.
+    """
+    if not text:
+        return None
+    s = str(text).upper().strip()
+    bulan_map = {
+        "JANUARI": 1, "JAN": 1,
+        "FEBRUARI": 2, "FEB": 2,
+        "MARET": 3, "MAR": 3,
+        "APRIL": 4, "APR": 4,
+        "MEI": 5, "MAY": 5,
+        "JUNI": 6, "JUN": 6,
+        "JULI": 7, "JUL": 7,
+        "AGUSTUS": 8, "AGT": 8, "AUG": 8,
+        "SEPTEMBER": 9, "SEP": 9,
+        "OKTOBER": 10, "OKT": 10, "OCT": 10,
+        "NOVEMBER": 11, "NOV": 11,
+        "DESEMBER": 12, "DES": 12, "DEC": 12
+    }
+    # Pola 1: DD NAMA_BULAN (misal '05 NOVEMBER' atau '6 NOVEMBER 2026')
+    m1 = re.search(r'\b(\d{1,2})\s+([A-Z]+)', s)
+    if m1:
+        d = int(m1.group(1))
+        b_name = m1.group(2)
+        if b_name in bulan_map:
+            return (d, bulan_map[b_name])
+    # Pola 2: DD[-/. ]MM[-/. ]YY(YY) (misal '06-11-2026' atau '6/11/26')
+    m2 = re.search(r'\b(\d{1,2})\s*[-/.]\s*(\d{1,2})\s*[-/.]\s*(\d{2,4})\b', s)
+    if m2:
+        d, mo = int(m2.group(1)), int(m2.group(2))
+        if 1 <= mo <= 12 and 1 <= d <= 31:
+            return (d, mo)
+    return None
 
 
 def is_puskesmas_mismatch(detected_pkm, folder_pkm):
@@ -1752,12 +1793,21 @@ def mode_extract(config, ref_by_no=None, ref_by_name=None, target_pkm=None):
     img_extensions = {".jpg", ".jpeg", ".png", ".webp"}
     root_photos = [f for f in input_base_dir.iterdir() if f.is_file() and f.suffix.lower() in img_extensions]
     if root_photos:
-        default_pkm_name = config.get("PUSKESMAS", "PUSKESMAS_DEFAULT")
+        default_pkm_name = config.get("PUSKESMAS")
+        if not default_pkm_name or default_pkm_name.strip().upper() in ["PUSKESMAS_DEFAULT", "NONE", ""]:
+            cfg_dm = extract_day_month(config.get("TANGGAL_EXAM"))
+            if cfg_dm:
+                default_pkm_name = f"PUSKESMAS TAMBAHAN {cfg_dm[0]:02d} {BULAN_NAMA[cfg_dm[1]]}"
+            else:
+                default_pkm_name = "PUSKESMAS_DEFAULT"
         default_dir = input_base_dir / default_pkm_name
         default_dir.mkdir(exist_ok=True)
         for rf in root_photos:
             shutil.move(str(rf), str(default_dir / rf.name))
         pkm_subfolders = [d for d in input_base_dir.iterdir() if d.is_dir()]
+        if target_pkm:
+            target_clean = target_pkm.strip().upper()
+            pkm_subfolders = [d for d in pkm_subfolders if target_clean in d.name.strip().upper() or d.name.strip().upper() in target_clean]
 
     if not pkm_subfolders:
         print(" [INFO] Tidak ada subfolder Puskesmas atau foto ditemukan di 'foto_masuk/'.", flush=True)
@@ -1768,6 +1818,19 @@ def mode_extract(config, ref_by_no=None, ref_by_name=None, target_pkm=None):
 
     for pkm_folder in pkm_subfolders:
         nama_pkm = pkm_folder.name.strip()
+
+        # Validasi tanggal untuk folder TAMBAHAN:
+        # Jika folder bernama TAMBAHAN [TANGGAL] tetapi tanggal di config berbeda,
+        # alihkan nama_pkm ke tanggal config yang aktif agar tidak merusak data lama!
+        if "TAMBAHAN" in nama_pkm.upper():
+            fld_dm = extract_day_month(nama_pkm)
+            cfg_dm = extract_day_month(config.get("TANGGAL_EXAM"))
+            if fld_dm and cfg_dm and fld_dm != cfg_dm:
+                actual_pkm = f"PUSKESMAS TAMBAHAN {cfg_dm[0]:02d} {BULAN_NAMA[cfg_dm[1]]}"
+                print(f"  [SAFETY GUARD] Folder '{nama_pkm}' berbeda dengan Tanggal Exam config ({config.get('TANGGAL_EXAM')}).", flush=True)
+                print(f"  [SAFETY GUARD] Mengalihkan target output ke '{actual_pkm}' agar data tanggal sebelumnya aman!", flush=True)
+                nama_pkm = actual_pkm
+
         print("\n" + "=" * 55, flush=True)
         print(f" >>> MEMPROSES EKSTRAKSI: {nama_pkm} <<<", flush=True)
         print("=" * 55, flush=True)
@@ -1833,6 +1896,25 @@ def mode_extract(config, ref_by_no=None, ref_by_name=None, target_pkm=None):
                 # JANGAN masukkan datanya ke Excel
                 # JANGAN pindahkan ke arsip (biarkan tetap di foto_masuk/[nama_folder]/)
                 continue
+
+            # SAFETY GUARD: Jika tanggal foto berbeda dengan tanggal folder TAMBAHAN
+            if "TAMBAHAN" in nama_pkm.upper():
+                photo_dm = extract_day_month(detected_tgl)
+                curr_dm = extract_day_month(nama_pkm)
+                if photo_dm and curr_dm and photo_dm != curr_dm:
+                    photo_pkm = f"PUSKESMAS TAMBAHAN {photo_dm[0]:02d} {BULAN_NAMA[photo_dm[1]]}"
+                    print(f"  [SAFETY GUARD] Tanggal pada foto ({detected_tgl}) berbeda dengan target ({nama_pkm}).", flush=True)
+                    print(f"  [SAFETY GUARD] Mengalihkan target ke '{photo_pkm}' agar data tanggal sebelumnya aman!", flush=True)
+                    nama_pkm = photo_pkm
+                    pkm_out_dir = BASE_DIR / "HASIL_PUSKESMAS" / nama_pkm
+                    pkm_out_dir.mkdir(parents=True, exist_ok=True)
+                    rekap_excel_path = pkm_out_dir / f"Tambahan {photo_dm[0]:02d} {BULAN_NAMA[photo_dm[1]]}.xlsx"
+                    if not rekap_excel_path.exists():
+                        alt_cand = [f for f in pkm_out_dir.glob("*.xlsx") if not f.name.startswith("~$") and "template" not in f.name.lower()]
+                        if alt_cand:
+                            rekap_excel_path = alt_cand[0]
+                        elif template_excel.exists():
+                            init_rekap_excel(rekap_excel_path, template_excel, nama_pkm, config, pkm_ref_by_no)
 
             valid_in_photo = []
             param_keys_darah = {
@@ -2061,8 +2143,17 @@ def mode_extract(config, ref_by_no=None, ref_by_name=None, target_pkm=None):
         except PermissionError:
             print(f"  [WARN] Folder pasien belum diperbarui karena file '{rekap_excel_path.name}' sedang dibuka di Excel.", flush=True)
 
-        # Catatan: Subfolder Puskesmas di foto_masuk/ DIBIARKAN TETAP ADA (standby)
-        # untuk menerima foto susulan berikutnya.
+        # Catatan: Subfolder Puskesmas di foto_masuk/ dibiarkan standby untuk puskesmas reguler.
+        # Namun untuk folder 'TAMBAHAN' (yang spesifik tanggal), jika sudah tidak ada sisa foto,
+        # folder otomatis dibersihkan agar tidak menampung foto tanggal berbeda di masa mendatang.
+        if "TAMBAHAN" in pkm_folder.name.upper():
+            try:
+                rem_photos = [f for f in pkm_folder.iterdir() if f.is_file() and f.suffix.lower() in img_extensions]
+                if not rem_photos:
+                    shutil.rmtree(pkm_folder)
+                    print(f"  [BERSIH] Folder sementara 'foto_masuk/{pkm_folder.name}' telah dibersihkan.", flush=True)
+            except Exception:
+                pass
 
     print("\n" + "=" * 60, flush=True)
     print("   PROSES EKSTRAKSI FOTO SELESAI!", flush=True)
