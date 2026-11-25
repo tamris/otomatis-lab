@@ -739,13 +739,15 @@ def find_matching_row(ws, col_map, p, nama_pkm=""):
         return None
 
 
-def is_param_filled(val):
+def is_param_filled(val, allow_dash=False):
     """Mengecek apakah nilai parameter lab terisi (bukan None, bukan string kosong)."""
     if val is None:
         return False
     if isinstance(val, (int, float)):
         return True
     s = str(val).strip()
+    if allow_dash:
+        return s != "" and s.upper() not in ["NONE", "NULL"]
     return s != "" and s.upper() not in ["NONE", "NULL", "-"]
 
 
@@ -1371,7 +1373,7 @@ def update_rekap_excel(rekap_path, template_source, jenis, patients, config, nam
     return False
 
 
-def validate_darah_patient(p):
+def validate_darah_patient(p, allow_dash=True):
     """
     Validasi kelengkapan parameter lab wajib DARAH.
     HANYA boleh digenerate jika parameter wajib sudah lengkap terisi.
@@ -1395,12 +1397,12 @@ def validate_darah_patient(p):
     ]
     missing = []
     for label, aliases in required_checks:
-        if not any(is_param_filled(p.get(a)) for a in aliases):
+        if not any(is_param_filled(p.get(a), allow_dash=allow_dash) for a in aliases):
             missing.append(label)
     return len(missing) == 0, missing
 
 
-def validate_urin_patient(p):
+def validate_urin_patient(p, allow_dash=True):
     """
     Validasi kelengkapan parameter lab wajib URIN.
     Parameter wajib meliputi:
@@ -1418,7 +1420,7 @@ def validate_urin_patient(p):
     ]
     missing = []
     for label, aliases in required_checks:
-        if not any(is_param_filled(p.get(a)) for a in aliases):
+        if not any(is_param_filled(p.get(a), allow_dash=allow_dash) for a in aliases):
             missing.append(label)
     return len(missing) == 0, missing
 
